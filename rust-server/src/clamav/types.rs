@@ -44,12 +44,22 @@ impl fmt::Display for ScannedFiles {
     }
 }
 
+/// 文件总数
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TotalFiles(pub u32);
+
+impl fmt::Display for TotalFiles {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// 发现的威胁数量
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThreatsFound(pub u32);
 
 impl fmt::Display for ThreatsFound {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt:: Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
@@ -83,6 +93,7 @@ impl fmt::Display for ScanStatus {
 pub struct ScanProgress {
     pub percent: ProgressPercent,
     pub scanned_files: ScannedFiles,
+    pub total_files: TotalFiles,
     pub threats_found: ThreatsFound,
     pub current_file: Option<FilePath>,
 }
@@ -92,6 +103,7 @@ impl ScanProgress {
         Self {
             percent: ProgressPercent(0),
             scanned_files: ScannedFiles(0),
+            total_files: TotalFiles(0),
             threats_found: ThreatsFound(0),
             current_file: None,
         }

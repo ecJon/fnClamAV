@@ -91,15 +91,17 @@ impl ScanService {
             let db = db.clone();
             let scan_id = scan_id_for_callback.clone();
             let scanned = progress.scanned_files.0;
+            let total = progress.total_files.0;
             let percent = progress.percent.0;
             let current_file = progress.current_file.as_ref().map(|f| f.0.clone());
             let threats = progress.threats_found.0;
-            tracing::debug!("Progress update: scan_id={}, scanned={}, percent={}, current_file={:?}, threats={}",
-                          scan_id, scanned, percent, current_file, threats);
+            tracing::debug!("Progress update: scan_id={}, scanned={}/{}, percent={}, current_file={:?}, threats={}",
+                          scan_id, scanned, total, percent, current_file, threats);
             tokio::spawn(async move {
                 let _ = db.update_scan_progress(
                     &scan_id,
                     scanned as i32,
+                    total as i32,
                     current_file.as_deref(),
                 );
             });

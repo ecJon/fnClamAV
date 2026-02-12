@@ -558,6 +558,7 @@ impl ScanEngine {
             ScanProgress {
                 percent: ProgressPercent(0),
                 scanned_files: ScannedFiles(0),
+                total_files: TotalFiles(1),
                 threats_found: ThreatsFound(0),
                 current_file: Some(FilePath(path.display().to_string())),
             },
@@ -582,6 +583,7 @@ impl ScanEngine {
             ScanProgress {
                 percent: ProgressPercent(100),
                 scanned_files: ScannedFiles(1),
+                total_files: TotalFiles(1),
                 threats_found: ThreatsFound(if is_infected { 1 } else { 0 }),
                 current_file: None,
             },
@@ -639,6 +641,7 @@ impl ScanEngine {
                 ScanProgress {
                     percent: ProgressPercent(percent),
                     scanned_files: ScannedFiles(scanned),
+                    total_files: TotalFiles(total),
                     threats_found: ThreatsFound(all_threats.len() as u32),
                     current_file: Some(FilePath(file.display().to_string())),
                 },
@@ -683,6 +686,7 @@ impl ScanEngine {
             ScanProgress {
                 percent: ProgressPercent(100),
                 scanned_files: ScannedFiles(scanned),
+                total_files: TotalFiles(total),
                 threats_found: ThreatsFound(all_threats.len() as u32),
                 current_file: None,
             },

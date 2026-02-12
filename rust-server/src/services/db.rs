@@ -143,17 +143,17 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn update_scan_progress(&self, scan_id: &str, scanned_files: i32, current_file: Option<&str>) -> SqliteResult<()> {
+    pub fn update_scan_progress(&self, scan_id: &str, scanned_files: i32, total_files: i32, current_file: Option<&str>) -> SqliteResult<()> {
         let conn = self.get_conn()?;
         if let Some(file) = current_file {
             conn.execute(
-                "UPDATE scan_history SET scanned_files = ?1, current_file = ?2 WHERE scan_id = ?3",
-                [scanned_files.to_string(), file.to_string(), scan_id.to_string()],
+                "UPDATE scan_history SET scanned_files = ?1, total_files = ?2, current_file = ?3 WHERE scan_id = ?4",
+                [scanned_files.to_string(), total_files.to_string(), file.to_string(), scan_id.to_string()],
             )?;
         } else {
             conn.execute(
-                "UPDATE scan_history SET scanned_files = ?1 WHERE scan_id = ?2",
-                [scanned_files.to_string(), scan_id.to_string()],
+                "UPDATE scan_history SET scanned_files = ?1, total_files = ?2 WHERE scan_id = ?3",
+                [scanned_files.to_string(), total_files.to_string(), scan_id.to_string()],
             )?;
         }
         Ok(())
