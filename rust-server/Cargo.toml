@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # HTTP server framework
-axum = { version = "0.7", features = ["ws", "macros"] }
+axum = { version = "0.7", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
@@ -25,10 +25,6 @@ anyhow = "1"
 
 # Date/time
 chrono = "0.4"
-
-# WebSocket
-tokio-tungstenite = "0.21"
-futures-util = "0.3"
 
 # Logging
 tracing = "0.1"
