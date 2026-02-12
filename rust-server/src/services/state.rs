@@ -1,5 +1,6 @@
 use crate::env::FnosEnv;
-use crate::services::Database;
+use crate::services::{Database, ClamavService, ScanService, UpdateService};
+use crate::models::config::ClamAVConfig;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -8,20 +9,31 @@ use tokio::sync::RwLock;
 pub struct AppState {
     pub env: FnosEnv,
     pub db: Arc<Database>,
-    pub scan_service: Arc<tokio::sync::RwLock<crate::services::ScanService>>,
-    pub update_service: Arc<tokio::sync::RwLock<crate::services::UpdateService>>,
+    pub scan_service: Arc<tokio::sync::RwLock<ScanService>>,
+    pub update_service: Arc<tokio::sync::RwLock<UpdateService>>,
 }
 
 impl AppState {
     pub fn new(env: FnosEnv) -> Self {
         let db = Arc::new(Database::new(&env.history_db()));
 
+        // 创建 ClamAV 配置
+        let clamav_config = ClamAVConfig {
+            database_dir: env.clamav_db_dir(),
+            certs_dir: Some(format!("{}/certs", env.app_dest)),
+            lib_path: Some(format!("{}/lib/libclamav.so", env.app_dest)),
+            ..Default::default()
+        };
+
+        // 创建 ClamAV 服务
+        let clamav = ClamavService::new(clamav_config);
+
         let scan_service = Arc::new(tokio::sync::RwLock::new(
-            crate::services::ScanService::new(db.clone(), env.clone())
+            ScanService::new(db.clone(), clamav.clone())
         ));
 
         let update_service = Arc::new(tokio::sync::RwLock::new(
-            crate::services::UpdateService::new(db.clone(), env.clone())
+            UpdateService::new(db.clone(), env.clone())
         ));
 
         Self {

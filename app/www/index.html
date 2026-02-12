@@ -47,7 +47,7 @@
                 </section>
 
                 <!-- 扫描进度 -->
-                <section v-if="scanStatus.scan_id" class="scan-progress-card">
+                <section v-if="uiState.showProgress" class="scan-progress-card">
                     <h3>扫描进度</h3>
                     <div class="progress-bar-container">
                         <div class="progress-bar">

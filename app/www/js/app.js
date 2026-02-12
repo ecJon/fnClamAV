@@ -26,9 +26,14 @@ createApp({
             // 扫描状态
             scanStatus: {
                 scan_id: null,
-                status: 'idle',
+                status: 'idle',      // idle, scanning, completed, failed
                 progress: null,
                 threats: null
+            },
+
+            // UI 显示状态
+            uiState: {
+                showProgress: false  // 是否显示进度卡片
             },
 
             // 更新状态
@@ -133,9 +138,6 @@ createApp({
             try {
                 const data = await this.apiRequest('status');
                 this.systemStatus.is_scanning = data.scan_in_progress || false;
-                if (this.systemStatus.is_scanning) {
-                    await this.loadScanStatus();
-                }
             } catch (error) {
                 console.error('Failed to load system status:', error);
             }
@@ -145,12 +147,41 @@ createApp({
         async loadScanStatus() {
             try {
                 const data = await this.apiRequest('scan/status');
+                const oldStatus = this.scanStatus.status;
+                const newStatus = data.status;
+
+                // 更新扫描状态
                 this.scanStatus = {
                     scan_id: data.scan_id,
-                    status: data.status,
+                    status: newStatus,
                     progress: data.progress,
                     threats: data.threats
                 };
+
+                // 状态转换逻辑
+                if (newStatus === 'scanning' && !this.uiState.showProgress) {
+                    // 开始扫描 -> 显示进度
+                    this.uiState.showProgress = true;
+                } else if ((newStatus === 'completed' || newStatus === 'failed') && oldStatus === 'scanning') {
+                    // 扫描刚完成 -> 显示完成通知，保持显示进度 5 秒后隐藏
+                    if (newStatus === 'completed') {
+                        const threats = data.threats?.count || 0;
+                        if (threats > 0) {
+                            this.showNotification(`扫描完成，发现 ${threats} 个威胁`, 'warning');
+                        } else {
+                            this.showNotification('扫描完成，未发现威胁', 'success');
+                        }
+                    } else {
+                        this.showNotification('扫描失败', 'error');
+                    }
+
+                    setTimeout(() => {
+                        this.uiState.showProgress = false;
+                        this.scanStatus.status = 'idle';
+                        this.scanStatus.progress = null;
+                        this.loadScanHistory(); // 刷新历史记录
+                    }, 5000);
+                }
             } catch (error) {
                 console.error('Failed to load scan status:', error);
             }
@@ -255,6 +286,8 @@ createApp({
                 if (result.success) {
                     this.showNotification('全盘扫描已启动', 'success');
                     this.scanStatus.scan_id = result.scan_id;
+                    this.scanStatus.status = 'scanning';
+                    this.uiState.showProgress = true;  // 立即显示进度条
                     await this.loadSystemStatus();
                     await this.loadScanHistory();
                 } else {
@@ -290,6 +323,8 @@ createApp({
                 if (result.success) {
                     this.showNotification('自定义扫描已启动', 'success');
                     this.scanStatus.scan_id = result.scan_id;
+                    this.scanStatus.status = 'scanning';
+                    this.uiState.showProgress = true;  // 立即显示进度条
                     await this.loadSystemStatus();
                     await this.loadScanHistory();
                 } else {
@@ -477,9 +512,15 @@ createApp({
         // 开始轮询状态
         startPolling() {
             this.pollTimer = setInterval(async () => {
-                if (this.systemStatus.is_scanning) {
-                    await this.loadSystemStatus();
+                // 总是获取系统状态
+                await this.loadSystemStatus();
+
+                // 只在有扫描进行或显示进度时获取扫描状态
+                if (this.systemStatus.is_scanning || this.uiState.showProgress) {
+                    await this.loadScanStatus();
                 }
+
+                // 处理病毒库更新状态
                 if (this.updateStatus.is_updating) {
                     const data = await this.apiRequest('update/status');
                     this.updateStatus.is_updating = data.is_updating || false;

@@ -7,6 +7,9 @@ APP_NAME="clamav-daemon"
 APP_DEST="${TRIM_APPDEST}"
 SERVER_BIN="${APP_DEST}/server/${APP_NAME}"
 
+# 设置动态库搜索路径（用于 FFI 版本）
+export LD_LIBRARY_PATH="${APP_DEST}/lib:${LD_LIBRARY_PATH}"
+
 # 使用应用可写的动态数据目录存储 PID 和日志
 PID_DIR="${TRIM_PKGVAR}"
 PID_FILE="${PID_DIR}/${APP_NAME}.pid"

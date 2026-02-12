@@ -159,6 +159,15 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_scan_status(&self, scan_id: &str, status: &str) -> SqliteResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "UPDATE scan_history SET status = ?1 WHERE scan_id = ?2",
+            [status, scan_id],
+        )?;
+        Ok(())
+    }
+
     pub fn finish_scan(
         &self,
         scan_id: &str,
@@ -185,6 +194,7 @@ impl Database {
 
     pub fn get_current_scan(&self) -> SqliteResult<Option<ScanRecord>> {
         let conn = self.get_conn()?;
+        // 首先查询正在扫描的记录
         let mut stmt = conn.prepare(
             "SELECT id, scan_id, scan_type, paths, status, start_time, end_time,
                     total_files, scanned_files, threats_found, current_file, error_message
@@ -194,7 +204,7 @@ impl Database {
         let mut rows = stmt.query([])?;
 
         if let Some(row) = rows.next()? {
-            Ok(Some(ScanRecord {
+            return Ok(Some(ScanRecord {
                 id: row.get(0)?,
                 scan_id: row.get(1)?,
                 scan_type: row.get(2)?,
@@ -207,10 +217,38 @@ impl Database {
                 threats_found: row.get(9)?,
                 current_file: row.get(10)?,
                 error_message: row.get(11)?,
-            }))
-        } else {
-            Ok(None)
+            }));
         }
+
+        // 如果没有正在扫描的，查询最近5秒内完成的扫描（用于显示最终状态）
+        let recent_threshold = chrono::Utc::now().timestamp() - 5;
+        let mut stmt = conn.prepare(
+            "SELECT id, scan_id, scan_type, paths, status, start_time, end_time,
+                    total_files, scanned_files, threats_found, current_file, error_message
+             FROM scan_history WHERE status IN ('completed', 'failed') AND end_time > ?1
+             ORDER BY end_time DESC LIMIT 1"
+        )?;
+
+        let mut rows = stmt.query([recent_threshold])?;
+
+        if let Some(row) = rows.next()? {
+            return Ok(Some(ScanRecord {
+                id: row.get(0)?,
+                scan_id: row.get(1)?,
+                scan_type: row.get(2)?,
+                paths: row.get(3)?,
+                status: row.get(4)?,
+                start_time: row.get(5)?,
+                end_time: row.get(6)?,
+                total_files: row.get(7)?,
+                scanned_files: row.get(8)?,
+                threats_found: row.get(9)?,
+                current_file: row.get(10)?,
+                error_message: row.get(11)?,
+            }));
+        }
+
+        Ok(None)
     }
 
     pub fn get_scan_history(&self, limit: i32) -> SqliteResult<Vec<ScanRecord>> {

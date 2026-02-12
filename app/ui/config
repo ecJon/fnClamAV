@@ -1,12 +1,12 @@
 {
     ".url": {
-        "App.Native.ClamAVAntivirus.Application": {
-            "title": "ClamAV 杀毒软件",
+        "fnnas.clamav.Application": {
+            "title": "ClamAV 杀毒",
             "icon": "images/icon-{0}.png",
             "type": "iframe",
             "protocol": "http",
-            "url": "/cgi/ThirdParty/App.Native.ClamAVAntivirus/index.cgi/",
-            "allUsers": false
+            "url": "/cgi/ThirdParty/fnnas.clamav/index.cgi/",
+            "allUsers": true
         }
     }
 }

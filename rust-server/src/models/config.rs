@@ -105,3 +105,33 @@ pub struct ConfigResponse {
     pub update: UpdateConfig,
     pub history: HistoryConfig,
 }
+
+/// ClamAV 引擎配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClamAVConfig {
+    /// 病毒库目录
+    pub database_dir: String,
+    /// 证书目录
+    pub certs_dir: Option<String>,
+    /// libclamav.so 路径
+    pub lib_path: Option<String>,
+    /// 最大扫描线程数
+    pub max_threads: u32,
+    /// 扫描超时时间（秒）
+    pub scan_timeout: u32,
+    /// 是否启用启发式扫描
+    pub heuristic_scan: bool,
+}
+
+impl Default for ClamAVConfig {
+    fn default() -> Self {
+        Self {
+            database_dir: "/var/lib/clamav".to_string(),
+            certs_dir: None,
+            lib_path: None,
+            max_threads: 4,
+            scan_timeout: 300,
+            heuristic_scan: true,
+        }
+    }
+}

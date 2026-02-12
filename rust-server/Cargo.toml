@@ -17,6 +17,15 @@ serde_json = "1"
 # Database
 rusqlite = { version = "0.30", features = ["bundled"] }
 
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Error handling
+anyhow = "1"
+
+# Date/time
+chrono = "0.4"
+
 # WebSocket
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
@@ -28,18 +37,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Async utilities
 async-trait = "0.1"
 
-# Date/time
-chrono = "0.4"
-
-# UUID
-uuid = { version = "1", features = ["v4", "serde"] }
-
 # Environment variables
 dotenvy = "0.15"
 
 # Process management
 signal-hook = "0.3"
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
-
-# Error handling
-anyhow = "1"

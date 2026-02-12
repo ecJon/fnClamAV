@@ -1,295 +1,275 @@
-use crate::env::FnosEnv;
-use std::process::{Command, Stdio, Child};
-use std::io::{BufRead, BufReader};
+// ClamAV FFI 服务
+//
+// 此服务提供 ClamAV 引擎的高级接口：
+// - 引擎初始化和生命周期管理
+// - 扫描任务管理
+// - 进度回调处理
+// - 病毒库更新
+
 use std::sync::Arc;
+use std::path::PathBuf;
+use anyhow::{Result, Context};
 use tokio::sync::RwLock;
 
-/// ClamAV 服务
+use crate::models::ClamAVConfig;
+use crate::clamav::{
+    ClamAVEngine, EngineManager,
+};
+use crate::clamav::engine::{ScanTarget, TaskPriority, ScanEngine as ClamAVScanEngine, CompletionCallback};
+use crate::clamav::{ScanOptions, ScanProgress, ScanOutcome, VirusName, FilePath};
+
+/// 类型别名
+type ScanEngine = ClamAVScanEngine;
+
+/// ClamAV FFI 服务
 #[derive(Clone)]
 pub struct ClamavService {
-    env: FnosEnv,
-    current_scan_pid: Arc<RwLock<Option<u32>>>,
+    engine_manager: Arc<EngineManager>,
+    scan_engine: Arc<RwLock<Option<Arc<ScanEngine>>>>,
+    config: ClamAVConfig,
 }
 
 impl ClamavService {
-    pub fn new(env: FnosEnv) -> Self {
+    /// 创建新的 ClamAV 服务
+    pub fn new(config: ClamAVConfig) -> Self {
+        let engine_manager = Arc::new(EngineManager::new(config.clone()));
+
         Self {
-            env,
-            current_scan_pid: Arc::new(RwLock::new(None)),
+            engine_manager,
+            scan_engine: Arc::new(RwLock::new(None)),
+            config,
         }
     }
 
-    /// 执行扫描
-    pub async fn scan(
+    /// 初始化 ClamAV 引擎
+    pub async fn initialize(&self) -> Result<()> {
+        self.engine_manager.initialize()
+            .map_err(|e| anyhow::anyhow!("Failed to initialize ClamAV engine: {}", e))?;
+        Ok(())
+    }
+
+    /// 启动扫描引擎
+    pub async fn start_scan_engine(&self) -> Result<()> {
+        let engine = self.engine_manager.get_engine()
+            .map_err(|e| anyhow::anyhow!("Failed to get engine: {}", e))?;
+
+        let scan_engine = Arc::new(ScanEngine::new(engine));
+
+        let mut se = self.scan_engine.write().await;
+        *se = Some(scan_engine);
+        drop(se);
+
+        Ok(())
+    }
+
+    /// 获取扫描引擎
+    async fn get_scan_engine(&self) -> Result<Arc<ScanEngine>> {
+        let se: tokio::sync::RwLockReadGuard<'_, Option<Arc<ScanEngine>>> = self.scan_engine.read().await;
+        se.as_ref()
+            .map(Arc::clone)
+            .ok_or_else(|| anyhow::anyhow!("Scan engine not started"))
+    }
+
+    /// 提交扫描任务
+    pub async fn submit_scan(
         &self,
-        scan_id: String,
-        paths: Vec<String>,
-        progress_callback: Arc<dyn Fn(String, i32, u32, Option<String>) + Send + Sync>,
-    ) -> Result<ScanResult, String> {
-        let clamscan_bin = self.env.clamscan_bin();
-
-        // 检查二进制文件是否存在
-        if !std::path::Path::new(&clamscan_bin).exists() {
-            return Err(format!("ClamAV binary not found: {}", clamscan_bin));
-        }
-
-        // 构建命令 - 移除 --suppress-ok-results 以获取所有文件的扫描进度
-        let mut cmd = Command::new(&clamscan_bin);
-        // 移除 --infected 以获取所有文件的扫描进度
-        // 注意：这会产生大量输出，但能实时显示扫描进度
-        cmd.env("TRIM_APPDEST", &self.env.app_dest)
-            .env("TRIM_DATA_SHARE_PATHS", &self.env.data_dir())
-            .arg("--recursive")
-            .arg("--stdout");
-
-        // 添加扫描路径
-        for path in &paths {
-            cmd.arg(path);
-        }
-
-        tracing::info!("Starting scan: {:?}", cmd);
-
-        // 执行命令并读取输出
-        let mut child = cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to start clamscan: {}", e))?;
-
-        // 保存进程ID用于停止扫描
-        let pid = child.id();
-        *self.current_scan_pid.write().await = Some(pid as u32);
-        tracing::info!("Started scan with PID: {}", pid);
-
-        let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-
-        let mut total_files = 0u32;
-        let mut threats = Vec::new();
-        let mut current_file: Option<String> = None;
-
-        while let Some(Ok(line)) = lines.next() {
-            tracing::debug!("Scan output: {}", line);
-
-            // 解析输出行 - ClamAV 输出格式：
-            // /path/to/file: OK
-            // /path/to/file: VirusName FOUND
-            if let Some((file_path, status)) = self.parse_scan_line(&line) {
-                current_file = Some(file_path.clone());
-                total_files += 1;
-
-                if status == "FOUND" {
-                    // 提取病毒名称
-                    if let Some((_, virus_name)) = self.parse_threat_line(&line) {
-                        threats.push((file_path, virus_name));
-                    }
-                }
-
-                // 每扫描一个文件就报告进度
-                progress_callback(
-                    scan_id.clone(),
-                    total_files as i32,
-                    threats.len() as u32,
-                    current_file.clone(),
-                );
-            }
-        }
-
-        // 等待进程结束（无论正常完成还是被杀死）
-        let status = child.wait().map_err(|e| format!("Failed to wait for clamscan: {}", e))?;
-
-        // 清除PID
-        *self.current_scan_pid.write().await = None;
-        let status = child.wait().map_err(|e| format!("Failed to wait for clamscan: {}", e))?;
-
-        // ClamAV 退出码含义:
-        // 0 = 无病毒发现
-        // 1 = 发现病毒
-        // 其他 = 真正的错误
-        let exit_code = status.code().unwrap_or(-1);
-        let success = exit_code == 0 || exit_code == 1;  // 0和1都是成功扫描
-
-        Ok(ScanResult {
-            scan_id,
-            success,
-            total_files,
-            threats_found: threats.len() as u32,
-            threats,
-            error_message: if !success {
-                Some(format!("扫描失败，错误代码: {}", exit_code))
-            } else {
-                None
-            },
-        })
+        target: ScanTarget,
+        priority: TaskPriority,
+        options: ScanOptions,
+    ) -> Result<String> {
+        let scan_engine: Arc<ScanEngine> = self.get_scan_engine().await?;
+        scan_engine.submit_task(target, priority, options).await
     }
 
-    fn parse_threat_line(&self, line: &str) -> Option<(String, String)> {
-        // 格式: /path/to/file: VirusName FOUND
-        let parts: Vec<&str> = line.rsplitn(3, ' ').collect();
-        if parts.len() >= 3 {
-            let virus_name = parts[1].to_string();
-            let file_path = parts[2].trim_end_matches(':').to_string();
-            Some((file_path, virus_name))
-        } else {
-            None
-        }
+    /// 取消扫描任务
+    pub async fn cancel_scan(&self, task_id: &str) -> Result<bool> {
+        let scan_engine: Arc<ScanEngine> = self.get_scan_engine().await?;
+        scan_engine.cancel_task(task_id).await
     }
 
-    /// 解析扫描输出行，返回 (文件路径, 状态)
-    /// 状态可能是 "OK" 或 "FOUND"
-    fn parse_scan_line(&self, line: &str) -> Option<(String, String)> {
-        // 跳过空行和非扫描结果行
-        if line.is_empty()
-            || line.starts_with("---")
-            || line.starts_with("LibClamAV")
-            || line.starts_with("Known viruses")
-            || line.starts_with("Engine version")
-            || line.starts_with("Scanned directories")
-            || line.starts_with("Scanned files")
-            || line.starts_with("Infected files")
-            || line.starts_with("Data scanned")
-            || line.starts_with("Data read")
-            || line.starts_with("Time:")
-            || line.starts_with("Start Date")
-            || line.starts_with("End Date")
-            || line.contains("ERROR")
+    /// 暂停扫描任务
+    pub async fn pause_scan(&self, task_id: &str) -> Result<bool> {
+        let scan_engine: Arc<ScanEngine> = self.get_scan_engine().await?;
+        scan_engine.pause_task(task_id).await
+    }
+
+    /// 恢复扫描任务
+    pub async fn resume_scan(&self, task_id: &str) -> Result<bool> {
+        let scan_engine: Arc<ScanEngine> = self.get_scan_engine().await?;
+        scan_engine.resume_task(task_id).await
+    }
+
+    /// 获取任务状态
+    pub async fn get_task(&self, task_id: &str) -> Result<crate::clamav::engine::ScanTask> {
+        let scan_engine: Arc<ScanEngine> = self.get_scan_engine().await?;
+        scan_engine.get_task(task_id).await
+    }
+
+    /// 列出所有任务
+    pub async fn list_tasks(&self) -> Result<Vec<crate::clamav::engine::ScanTask>> {
+        let scan_engine: Arc<ScanEngine> = self.get_scan_engine().await?;
+        scan_engine.list_tasks().await
+    }
+
+    /// 健康检查
+    pub async fn health_check(&self) -> Result<bool> {
+        Ok(self.engine_manager.health_check())
+    }
+
+    /// 重新加载引擎
+    pub async fn reload_engine(&self) -> Result<()> {
+        self.engine_manager.reload()
+            .map_err(|e| anyhow::anyhow!("Reload failed: {}", e))
+    }
+
+    /// 关闭服务
+    pub async fn shutdown(&self) -> Result<()> {
+        // 关闭扫描引擎
         {
-            return None;
-        }
-
-        // 格式: /path/to/file: OK 或 /path/to/file: VirusName FOUND
-        if let Some(colon_pos) = line.rfind(':') {
-            let file_path = line[..colon_pos].trim().to_string();
-            let status_part = line[colon_pos + 1..].trim();
-
-            if status_part.ends_with("OK") {
-                return Some((file_path, "OK".to_string()));
-            } else if status_part.ends_with("FOUND") {
-                return Some((file_path, "FOUND".to_string()));
+            let mut se: tokio::sync::RwLockWriteGuard<'_, Option<Arc<ScanEngine>>> = self.scan_engine.write().await;
+            let scan_engine: Option<Arc<ScanEngine>> = se.take();
+            drop(se);
+            if let Some(engine) = scan_engine {
+                ScanEngine::shutdown(&*engine).await?;
             }
         }
 
-        None
+        // 关闭引擎管理器
+        self.engine_manager.shutdown();
+
+        Ok(())
     }
 
-    /// 更新病毒库
-    pub async fn update(&self) -> Result<UpdateResult, String> {
-        let db_dir = self.env.clamav_db_dir();
-        let freshclam_bin = self.env.freshclam_bin();
-
-        // 检查二进制文件是否存在
-        if !std::path::Path::new(&freshclam_bin).exists() {
-            return Err(format!("Freshclam binary not found: {}", freshclam_bin));
+    /// 设置进度回调
+    pub async fn set_progress_callback<F>(&self, callback: F)
+    where
+        F: Fn(ScanProgress) + Send + Sync + 'static,
+    {
+        match self.get_scan_engine().await {
+            Ok(engine) => {
+                ScanEngine::set_progress_callback(&*engine, std::sync::Arc::new(callback)).await;
+            }
+            Err(_) => {}
         }
+    }
 
-        // 构建命令
-        let output = Command::new(&freshclam_bin)
-            .env("TRIM_APPDEST", &self.env.app_dest)
-            .env("TRIM_DATA_SHARE_PATHS", &self.env.data_dir())
-            .arg("--stdout")
-            .arg("--no-warnings")
-            .output()
-            .map_err(|e| format!("Failed to run freshclam: {}", e))?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        tracing::info!("Freshclam output: {}", stdout);
-        if !stderr.is_empty() {
-            tracing::warn!("Freshclam stderr: {}", stderr);
+    /// 设置完成回调
+    pub async fn set_completion_callback<F>(&self, callback: F)
+    where
+        F: Fn(&Result<ScanOutcome>) + Send + Sync + 'static,
+    {
+        match self.get_scan_engine().await {
+            Ok(engine) => {
+                ScanEngine::set_completion_callback(&*engine, std::sync::Arc::new(callback)).await;
+            }
+            Err(_) => {}
         }
-
-        // 解析输出
-        let (old_version, new_version) = self.parse_update_output(&stdout);
-
-        Ok(UpdateResult {
-            success: output.status.success(),
-            old_version,
-            new_version,
-            error_message: if !output.status.success() {
-                Some(format!("Exit code: {:?}", output.status.code()))
-            } else {
-                None
-            },
-        })
     }
 
-    fn parse_update_output(&self, output: &str) -> (Option<String>, Option<String>) {
-        // 简化版本解析，实际需要更复杂的解析
-        let old_version = None;
-        let new_version = None;
+    /// 获取引擎状态
+    pub async fn get_engine_state(&self) -> crate::clamav::EngineState {
+        self.engine_manager.get_state()
+    }
+}
 
-        // TODO: 解析 freshclam 输出获取版本信息
+/// 扫描任务请求
+#[derive(Debug, Clone)]
+pub struct ScanRequest {
+    pub paths: Vec<String>,
+    pub priority: TaskPriority,
+    pub options: ScanOptions,
+}
 
-        (old_version, new_version)
+impl ScanRequest {
+    pub fn new(paths: Vec<String>) -> Self {
+        Self {
+            paths,
+            priority: TaskPriority::Normal,
+            options: ScanOptions::default(),
+        }
     }
 
-    /// 停止扫描（通过 PID）
-    pub async fn stop_scan(&self, scan_id: &str) -> Result<(), String> {
-        // 读取当前扫描的PID
-        let pid = self.current_scan_pid.read().await;
+    pub fn with_priority(mut self, priority: TaskPriority) -> Self {
+        self.priority = priority;
+        self
+    }
 
-        if let Some(scan_pid) = *pid {
-            tracing::info!("Stopping scan {} with PID: {}", scan_id, scan_pid);
+    pub fn with_options(mut self, options: ScanOptions) -> Self {
+        self.options = options;
+        self
+    }
 
-            // 使用标准库的 kill 命令来停止进程
-            #[cfg(unix)]
-            {
-                use std::process::Command;
-
-                // 先尝试 SIGTERM（优雅退出）
-                let term_result = Command::new("kill")
-                    .arg("-TERM")
-                    .arg(scan_pid.to_string())
-                    .output();
-
-                match &term_result {
-                    Ok(output) => {
-                        if !output.status.success() {
-                            tracing::warn!("SIGTERM failed, trying SIGKILL");
-                            // SIGTERM 失败，使用 SIGKILL（强制退出）
-                            let _ = Command::new("kill")
-                                .arg("-KILL")
-                                .arg(scan_pid.to_string())
-                                .status();
-                        } else {
-                            tracing::info!("Sent SIGTERM to PID {}", scan_pid);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to execute kill command: {}", e);
-                    }
+    /// 将路径转换为扫描目标
+    pub fn to_targets(&self) -> Vec<ScanTarget> {
+        self.paths.iter()
+            .filter_map(|p| {
+                let path = PathBuf::from(p);
+                if path.exists() {
+                    Some(ScanTarget::from_path(path))
+                } else {
+                    None
                 }
-            }
+            })
+            .collect()
+    }
+}
 
-            // 清除PID
-            drop(pid);
-            *self.current_scan_pid.write().await = None;
-
-            Ok(())
-        } else {
-            Err("No scan process found".to_string())
+impl Default for ScanRequest {
+    fn default() -> Self {
+        Self {
+            paths: Vec::new(),
+            priority: TaskPriority::Normal,
+            options: ScanOptions::default(),
         }
     }
 }
 
-/// 扫描结果
+/// 扫描任务响应
 #[derive(Debug, Clone)]
-pub struct ScanResult {
-    pub scan_id: String,
-    pub success: bool,
-    pub total_files: u32,
-    pub threats_found: u32,
-    pub threats: Vec<(String, String)>,  // (file_path, virus_name)
-    pub error_message: Option<String>,
+pub struct ScanResponse {
+    pub task_id: String,
+    pub status: String,
 }
 
-/// 更新结果
+/// 扫描状态详情
 #[derive(Debug, Clone)]
-pub struct UpdateResult {
-    pub success: bool,
-    pub old_version: Option<String>,
-    pub new_version: Option<String>,
-    pub error_message: Option<String>,
+pub struct ScanStatusDetail {
+    pub task_id: String,
+    pub state: String,
+    pub percent: u8,
+    pub scanned_files: u32,
+    pub threats_found: u32,
+    pub current_file: Option<String>,
+}
+
+impl From<crate::clamav::engine::ScanTask> for ScanStatusDetail {
+    fn from(task: crate::clamav::engine::ScanTask) -> Self {
+        Self {
+            task_id: task.id,
+            state: format!("{:?}", task.state),
+            percent: task.progress.percent.0,
+            scanned_files: task.progress.scanned_files.0,
+            threats_found: task.progress.threats_found.0,
+            current_file: task.progress.current_file.map(|f| f.0),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_request_new() {
+        let request = ScanRequest::new(vec!["/tmp/test".to_string()]);
+        assert_eq!(request.paths.len(), 1);
+        assert_eq!(request.priority, TaskPriority::Normal);
+    }
+
+    #[test]
+    fn test_scan_request_with_priority() {
+        let request = ScanRequest::new(vec![])
+            .with_priority(TaskPriority::High);
+        assert_eq!(request.priority, TaskPriority::High);
+    }
 }

@@ -1,7 +1,9 @@
 use axum::{extract::State, response::Json};
 use serde_json::json;
 use crate::services::AppState;
-use crate::models::{scan::*, update::VirusVersion};
+use crate::models::scan::*;
+use crate::clamav::engine::TaskPriority;
+use crate::clamav::ScanOptions;
 
 pub async fn start_scan(
     State(state): State<AppState>,
@@ -43,10 +45,15 @@ pub async fn start_scan(
 
     // 启动后台扫描
     let result = state.scan_service.write().await
-        .start_scan(scan_id.clone(), paths.clone()).await;
+        .start_scan(
+            scan_id.clone(),
+            paths.clone(),
+            TaskPriority::Normal,
+            ScanOptions::default(),
+        ).await;
 
     match result {
-        Ok(()) => Json(ScanResponse {
+        Ok(task_id) => Json(ScanResponse {
             success: true,
             scan_id: Some(scan_id),
             status: Some("scanning".to_string()),
@@ -56,7 +63,7 @@ pub async fn start_scan(
             success: false,
             scan_id: None,
             status: None,
-            error: Some(e),
+            error: Some(e.to_string()),
         }),
     }
 }
@@ -78,7 +85,7 @@ pub async fn stop_scan(
                 })),
                 Err(e) => Json(json!({
                     "success": false,
-                    "error": e
+                    "error": e.to_string()
                 })),
             }
         }
@@ -92,50 +99,39 @@ pub async fn stop_scan(
 pub async fn scan_status(
     State(state): State<AppState>,
 ) -> Json<ScanStatusResponse> {
-    let scan_service = state.scan_service.read().await;
-    let scan_id = scan_service.get_current_scan_id().await;
+    // 直接从数据库获取当前或最近的扫描状态
+    match state.db.get_current_scan() {
+        Ok(Some(scan)) => {
+            let elapsed = chrono::Utc::now().timestamp() - scan.start_time;
+            let scan_status = scan.status.clone();
+            let is_scanning = scan_status == "scanning";
 
-    match scan_id {
-        Some(sid) => {
-            // 从数据库获取扫描状态
-            match state.db.get_current_scan() {
-                Ok(Some(scan)) => {
-                    let elapsed = chrono::Utc::now().timestamp() - scan.start_time;
-
-                    Json(ScanStatusResponse {
-                        scan_id: Some(scan.scan_id),
-                        status: scan.status,
-                        progress: Some(ScanProgress {
-                            percent: if scan.total_files > 0 {
-                                (scan.scanned_files as f32 / scan.total_files as f32) * 100.0
-                            } else {
-                                0.0
-                            },
-                            scanned: scan.scanned_files as u64,
-                            estimated_total: scan.total_files as u64,
-                            current_file: scan.current_file.unwrap_or_default(),
-                        }),
-                        threats: Some(ThreatsInfo {
-                            count: scan.threats_found as u32,
-                            files: vec![],
-                        }),
-                        start_time: Some(scan.start_time),
-                        elapsed_seconds: Some(elapsed.max(0) as u64),
+            Json(ScanStatusResponse {
+                scan_id: Some(scan.scan_id),
+                status: scan_status,
+                progress: if is_scanning || scan.status == "completed" {
+                    Some(ScanProgress {
+                        percent: if scan.total_files > 0 {
+                            (scan.scanned_files as f32 / scan.total_files as f32) * 100.0
+                        } else {
+                            0.0
+                        },
+                        scanned: scan.scanned_files as u64,
+                        estimated_total: scan.total_files as u64,
+                        current_file: scan.current_file.unwrap_or_default(),
                     })
-                }
-                Ok(None) | Err(_) => {
-                    Json(ScanStatusResponse {
-                        scan_id: None,
-                        status: "idle".to_string(),
-                        progress: None,
-                        threats: None,
-                        start_time: None,
-                        elapsed_seconds: None,
-                    })
-                }
-            }
+                } else {
+                    None
+                },
+                threats: Some(ThreatsInfo {
+                    count: scan.threats_found as u32,
+                    files: vec![],
+                }),
+                start_time: Some(scan.start_time),
+                elapsed_seconds: Some(elapsed.max(0) as u64),
+            })
         }
-        None => {
+        Ok(None) | Err(_) => {
             Json(ScanStatusResponse {
                 scan_id: None,
                 status: "idle".to_string(),

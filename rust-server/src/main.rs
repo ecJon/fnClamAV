@@ -1,3 +1,4 @@
+mod clamav;
 mod env;
 mod models;
 mod services;
@@ -54,7 +55,27 @@ async fn main() -> anyhow::Result<()> {
     services::db::init_db(&env.history_db())?;
 
     // 构建应用状态
-    let app_state = services::AppState::new(env);
+    let app_state = services::AppState::new(env.clone());
+
+    // 初始化 ClamAV 引擎（FFI 版本）
+    tracing::info!("Initializing ClamAV engine...");
+
+    // 初始化引擎
+    {
+        let scan_service = app_state.scan_service.read().await;
+        if let Err(e) = scan_service.clamav.initialize().await {
+            tracing::error!("Failed to initialize ClamAV engine: {}", e);
+            return Err(anyhow::anyhow!("ClamAV engine initialization failed: {}", e));
+        }
+        tracing::info!("ClamAV engine initialized successfully");
+
+        // 启动扫描引擎
+        if let Err(e) = scan_service.clamav.start_scan_engine().await {
+            tracing::error!("Failed to start scan engine: {}", e);
+            return Err(anyhow::anyhow!("Scan engine start failed: {}", e));
+        }
+        tracing::info!("Scan engine started successfully");
+    }
 
     // 构建路由
     let app = Router::new()

@@ -1,26 +1,22 @@
 {
-    "data-share":
-    {
-        "shares":
-        [
+    "data-share": {
+        "shares": [
             {
-                "name": "App.Native.HelloFnosAppCenter",
-                "permission":
-                {
-                    "rw":
-                    [
-                        "App.Native.HelloFnosAppCenter"
-                    ]
+                "name": "fnnas.clamav",
+                "permission": {
+                    "rw": ["fnnas.clamav"]
                 }
             },
             {
-                "name": "App.Native.HelloFnosAppCenter/data",
-                "permission":
-                {
-                    "rw":
-                    [
-                        "App.Native.HelloFnosAppCenter"
-                    ]
+                "name": "fnnas.clamav/data",
+                "permission": {
+                    "rw": ["fnnas.clamav"]
+                }
+            },
+            {
+                "name": "fnnas.clamav/quarantine",
+                "permission": {
+                    "rw": ["fnnas.clamav"]
                 }
             }
         ]
