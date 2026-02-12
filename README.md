@@ -6,7 +6,7 @@
 
 - **全盘扫描** - 扫描整个系统或指定目录
 - **自定义扫描** - 选择特定路径进行扫描
-- **实时保护** - 监控文件变化（规划中）
+- **实时进度推送** - WebSocket 实时推送扫描进度
 - **病毒库更新** - 通过 freshclam 更新病毒定义
 - **威胁隔离** - 将受感染文件安全隔离
 - **扫描历史** - 查看历史扫描记录
@@ -19,28 +19,32 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Web UI (Vue.js)                        │
+│                   (WebSocket Client)                        │
 ├─────────────────────────────────────────────────────────────┤
 │                      CGI (bash)                             │
 ├─────────────────────────────────────────────────────────────┤
-│              Rust Daemon (Axum HTTP)                        │
+│              Rust Daemon (Axum HTTP + WebSocket)            │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
 │  │   Scan      │  │   Update    │  │  Quarantine  │        │
 │  │   Service   │  │   Service   │  │   Service    │        │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
 │         └────────────────┴────────────────┴─────────────┐  │
 │                    │  ClamAV FFI Manager                 │  │
-│                    └──────────────┬─────────────────────┘  │
-├───────────────────────────────────┼────────────────────────┤
-│              libclamav.so (FFI)    │                       │
-└───────────────────────────────────┴────────────────────────┘
+│         ┌──────────┴──────────────┬─────────────────────┘  │
+│         │   WebSocket Manager     │                        │
+│         └─────────────────────────┘                        │
+├────────────────────────────────────────────────────────────┤
+│              libclamav.so (FFI)                            │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ### 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 前端 | Vue.js 3 + 原生 JavaScript |
+| 前端 | Vue.js 3 + WebSocket |
 | 后端 | Rust (Axum) |
+| 实时通信 | WebSocket |
 | 杀毒引擎 | ClamAV 1.5.1 (FFI) |
 | 数据库 | SQLite (rusqlite) |
 | CGI | Bash |
@@ -69,14 +73,14 @@
 │   │   ├── clamav/          # ClamAV FFI 绑定
 │   │   ├── services/        # 业务服务层
 │   │   ├── handlers/        # HTTP 处理器
+│   │   ├── websocket/       # WebSocket 服务
 │   │   └── models/          # 数据模型
 │   └── Cargo.toml
 ├── clamAV/                  # ClamAV 源码 (git 子模块)
 ├── manifest                 # 应用清单
 ├── ICON.PNG                 # 64x64 图标
 ├── ICON_256.PNG             # 256x256 图标
-├── build-ffi.sh             # FFI 版本打包脚本
-└── build-clamav-shared.sh   # ClamAV 动态库编译脚本
+└── build.sh                 # 统一构建脚本
 ```
 
 ## 快速开始
@@ -88,42 +92,48 @@
 - **Node.js**: 16+ (仅用于前端开发)
 - **ClamAV**: 1.5.1 (自动编译)
 
-### 安装依赖
+### 一键构建
+
+```bash
+# 完整构建（包含 ClamAV 动态库）
+./build.sh
+
+# 清理缓存后重新构建
+./build.sh --clean
+
+# 跳过 ClamAV 构建（假设已存在）
+./build.sh --skip-clamav
+```
+
+构建流程：
+1. 检查构建依赖 (cargo, cmake, gcc)
+2. 编译 ClamAV 动态库 (libclamav.so)
+3. 编译 Rust 守护进程 (clamav-daemon)
+4. 打包为 fnOS 应用包 (fpk)
+
+### 安装构建依赖
 
 ```bash
 # 安装编译依赖
-sudo ./install-deps.sh
+sudo apt-get install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    libcurl4-openssl-dev \
+    libpcre2-dev \
+    libjson-c-dev \
+    zlib1g-dev \
+    libxml2-dev
 ```
 
-### 编译 ClamAV 动态库
+### 构建产物
 
-```bash
-# 编译 libclamav.so 及相关依赖库
-./build-clamav-shared.sh
-```
-
-编译产物将输出到 `app/lib/` 目录：
-- `libclamav.so.12` - ClamAV 核心库
-- `libclammspack.so.0` - 压缩文件支持
-- `libclamunrar.so.12` - RAR 解压支持
-
-### 编译 Rust 守护进程
-
-```bash
-cd rust-server
-cargo build --release
-```
-
-编译产物：`rust-server/target/release/clamav-daemon`
-
-### 打包应用
-
-```bash
-# 打包为 fnOS 应用包 (fpk)
-./build-ffi.sh
-```
-
-打包产物：`dist/fnnas.clamav.fpk` (约 140MB)
+- `app/lib/libclamav.so.12` - ClamAV 核心库
+- `app/lib/libclammspack.so.0` - 压缩文件支持
+- `app/lib/libclamunrar.so.12` - RAR 解压支持
+- `app/server/clamav-daemon` - Rust 守护进程
+- `dist/fnnas.clamav.fpk` - fnOS 应用包 (约 140MB)
 
 ## 安装和使用
 
@@ -137,7 +147,7 @@ cargo build --release
 
 #### 1. 全盘扫描
 
-扫描整个存储卷，检测所有威胁。
+扫描整个存储卷，实时显示扫描进度。
 
 #### 2. 自定义扫描
 
@@ -199,6 +209,14 @@ category              = security
 
 ## API 文档
 
+### WebSocket 连接
+
+```
+WS /api/ws
+```
+
+实时推送扫描进度和完成事件。
+
 ### 健康检查
 
 ```
@@ -249,6 +267,15 @@ ClamAV FFI 绑定位于 `rust-server/src/clamav/`：
 - `ffi.rs` - FFI 原始绑定
 - `engine.rs` - 扫描引擎封装
 - `manager.rs` - 引擎生命周期管理
+- `types.rs` - 类型定义
+
+### WebSocket 实现
+
+WebSocket 服务位于 `rust-server/src/websocket.rs`：
+
+- `WebSocketManager` - 连接管理和消息广播
+- `WsMessage` - 消息类型定义（进度、完成、错误）
+- `websocket_handler` - WebSocket 处理器
 
 ### 环境变量
 
@@ -279,13 +306,13 @@ Failed to initialize ClamAV engine
 
 **解决方法**: 检查病毒库是否存在于 `app/share/clamav/` 目录。
 
-#### 3. 扫描引擎未启动
+#### 3. WebSocket 连接失败
 
 ```
-scan engine not started
+WebSocket connection failed
 ```
 
-**解决方法**: 确保 Rust 守护进程正确初始化了扫描引擎。
+**解决方法**: 检查 CORS 配置和端口 8899 是否可访问。
 
 ## 相关文档
 
@@ -317,3 +344,9 @@ scan engine not started
 - 病毒库更新
 - 威胁隔离
 - Web UI
+
+### 1.1.0 (2025-02-13)
+
+- 新增 WebSocket 实时进度推送
+- 整合构建脚本
+- 修复进度条更新问题
