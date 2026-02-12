@@ -112,10 +112,11 @@ impl ScanService {
         let active_scans_clone = self.active_scans.clone();
         self.clamav.set_completion_callback(move |task_id, result| {
             let db = db_clone.clone();
+            let active_scans = active_scans_clone.clone();
 
             // 根据 task_id 查找对应的 scan_id（使用 block_in_place 在同步上下文中执行异步操作）
             let scan_id = tokio::task::block_in_place(|| {
-                let scans = active_scans_clone.try_read();
+                let scans = active_scans.try_read();
                 if let Ok(scans) = scans {
                     scans.iter()
                         .find(|(_, s)| s.task_id == task_id)
@@ -142,6 +143,7 @@ impl ScanService {
                     let total = outcome.total_files as i32;
                     let threats_count = outcome.threats.len();
                     let status = "completed";
+                    let scan_id_for_async = scan_id.clone();
                     let error_msg = if threats_count == 0 {
                         "扫描完成，未发现威胁"
                     } else {
@@ -149,18 +151,26 @@ impl ScanService {
                     };
 
                     tokio::spawn(async move {
-                        let _ = db.finish_scan(&scan_id, status, total, Some(error_msg));
+                        let _ = db.finish_scan(&scan_id_for_async, status, total, Some(error_msg));
                     });
                 }
                 Err(e) => {
                     tracing::error!("Scan failed: scan_id={}, task_id={}, error={:?}", scan_id, task_id, e);
                     // 扫描失败时也要更新数据库
                     let error_msg = e.to_string();
+                    let scan_id_for_async = scan_id.clone();
                     tokio::spawn(async move {
-                        let _ = db.finish_scan(&scan_id, "failed", 0, Some(error_msg.as_str()));
+                        let _ = db.finish_scan(&scan_id_for_async, "failed", 0, Some(error_msg.as_str()));
                     });
                 }
             }
+
+            // 从 active_scans 移除完成的扫描
+            tokio::spawn(async move {
+                let mut scans = active_scans.write().await;
+                scans.remove(&scan_id);
+                tracing::debug!("Removed scan {} from active_scans after completion", scan_id);
+            });
         }).await;
 
         // 提交扫描任务
