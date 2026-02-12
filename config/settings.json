@@ -1,0 +1,25 @@
+{
+  "scan": {
+    "default_scan_type": "full",
+    "exclude_paths": [
+      "/vol1/data",
+      "/vol1/media"
+    ],
+    "max_file_size_mb": 100,
+    "scan_archives": true
+  },
+  "threat": {
+    "action": "quarantine",
+    "auto_action": true
+  },
+  "update": {
+    "frequency": "daily",
+    "schedule_time": "03:30",
+    "timezone": "Asia/Shanghai",
+    "auto_check": true
+  },
+  "history": {
+    "retention_days": 90,
+    "max_records": 1000
+  }
+}

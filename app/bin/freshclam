@@ -1,0 +1,86 @@
+#!/bin/bash
+# ClamAV freshclam 包装脚本 - 自动处理路径
+# 用法: ./freshclam [选项]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAMAV_BIN="${SCRIPT_DIR}/freshclam.bin"
+
+# 获取病毒库目录
+# 在飞牛环境中，优先使用数据共享目录
+if [ -n "$TRIM_DATA_SHARE_PATHS" ]; then
+    # 使用数据共享目录（绝对路径，应该是可写的）
+    DATA_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
+    DB_DIR="${DATA_DIR}/clamav"
+    LOG_DIR="${DATA_DIR}/tmp"
+    CONFIG_ARG=""
+    CERTS_DIR=""
+elif [ -n "$TRIM_APPDEST" ]; then
+    # app 安装目录下的绝对路径
+    DB_DIR="${TRIM_APPDEST}/share/clamav"
+    LOG_DIR="${TRIM_APPDEST}/tmp"
+    CONFIG_FILE="${TRIM_APPDEST}/config/freshclam.conf"
+    CONFIG_ARG="--config-file=${CONFIG_FILE}"
+    CERTS_DIR="${TRIM_APPDEST}/certs"
+else
+    # 本地测试环境
+    DB_DIR="${SCRIPT_DIR}/../share/clamav"
+    LOG_DIR="${SCRIPT_DIR}/tmp"
+    CONFIG_FILE="${SCRIPT_DIR}/../config/freshclam.conf"
+    CONFIG_ARG="--config-file=${CONFIG_FILE}"
+    CERTS_DIR="${SCRIPT_DIR}/../certs"
+fi
+
+# 确保目录存在并设置权限
+echo "🔧 Setting up directories..."
+mkdir -p "${DB_DIR}"
+mkdir -p "${LOG_DIR}"
+mkdir -p "${CERTS_DIR}"
+
+# 设置目录权限（确保可写）
+chmod 755 "${DB_DIR}" 2>/dev/null || true
+chmod 777 "${DB_DIR}" 2>/dev/null || true
+chmod 777 "${LOG_DIR}" 2>/dev/null || true
+
+# 显示信息
+echo "📂 Database: ${DB_DIR}"
+echo "📝 Log: ${LOG_DIR}"
+if [ -n "${CONFIG_FILE}" ]; then
+    echo "⚙️  Config: ${CONFIG_FILE}"
+fi
+if [ -d "${CERTS_DIR}" ]; then
+    echo "🔐 Certs: ${CERTS_DIR}"
+fi
+echo "🔄 Updating virus signatures..."
+echo ""
+
+# 检查配置文件
+if [ -n "${CONFIG_FILE}" ] && [ ! -f "${CONFIG_FILE}" ]; then
+    echo "⚠️  Warning: Config file not found: ${CONFIG_FILE}"
+    echo "   Using command-line options only..."
+    echo ""
+    CONFIG_ARG=""
+fi
+
+# 构建命令参数
+ARGS="--datadir=${DB_DIR} --stdout --no-warnings"
+
+# 添加日志文件（使用绝对路径）
+ARGS="${ARGS} --log=${LOG_DIR}/freshclam.log"
+
+# 添加配置文件
+if [ -n "${CONFIG_ARG}" ]; then
+    ARGS="${ARGS} ${CONFIG_ARG}"
+fi
+
+# 添加用户参数（避免切换到 clamav 用户）
+ARGS="${ARGS} --user=${USER:-root}"
+
+# 注意：不使用 --no-dns，让 freshclam 先通过 DNS 检查是否有更新
+# 这样可以减少对 CDN 的直接请求，避免被限流
+
+# 调用 freshclam
+# 设置证书目录环境变量
+export CVD_CERTS_DIR="${CERTS_DIR}"
+echo "🔧 Running: ${CLAMAV_BIN} ${ARGS}"
+echo ""
+exec "${CLAMAV_BIN}" ${ARGS} "$@"

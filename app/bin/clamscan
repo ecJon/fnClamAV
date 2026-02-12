@@ -1,0 +1,67 @@
+#!/bin/bash
+# ClamAV 包装脚本 - 自动处理路径
+# 用法: ./clamscan [选项] [路径...]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 获取 ClamAV 二进制
+CLAMAV_BIN="${SCRIPT_DIR}/clamscan.bin"
+
+# 获取病毒库目录
+# 在飞牛环境中，优先使用数据共享目录
+if [ -n "$TRIM_DATA_SHARE_PATHS" ]; then
+    # 使用数据共享目录（绝对路径）
+    DATA_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
+    DB_DIR="${DATA_DIR}/clamav"
+elif [ -n "$TRIM_APPDEST" ]; then
+    # app 安装目录下的绝对路径
+    DB_DIR="${TRIM_APPDEST}/share/clamav"
+else
+    # 本地测试：检查多个可能的位置
+    DB_DIR=""
+    for path in \
+        "/var/lib/clamav" \
+        "/var/db/clamav" \
+        "${SCRIPT_DIR}/../share/clamav" \
+        "${SCRIPT_DIR}/share/clamav"
+    do
+        if [ -d "$path" ] && [ -n "$(ls -A $path 2>/dev/null)" ]; then
+            DB_DIR="$path"
+            break
+        fi
+    done
+
+    # 如果都没有，使用本地目录
+    if [ -z "$DB_DIR" ]; then
+        DB_DIR="${SCRIPT_DIR}/share/clamav"
+    fi
+fi
+
+# 确保病毒库目录存在
+mkdir -p "${DB_DIR}"
+
+# 检查病毒库是否存在
+HAS_DB=false
+for sig in daily main bytecode; do
+    if [ -f "${DB_DIR}/${sig}.cld" ] || [ -f "${DB_DIR}/${sig}.cvd" ]; then
+        HAS_DB=true
+        break
+    fi
+done
+
+# 如果没有病毒库，显示提示
+if [ "$HAS_DB" = false ]; then
+    echo "⚠️  ClamAV virus database not found in: ${DB_DIR}"
+    echo ""
+    echo "To initialize the virus database:"
+    echo "   ${SCRIPT_DIR}/freshclam"
+    echo ""
+    echo "Or copy from system:"
+    echo "   sudo cp -r /var/lib/clamav/* ${DB_DIR}/"
+    echo ""
+fi
+
+# 调用 clamscan，自动添加参数
+# 设置证书目录环境变量
+export CVD_CERTS_DIR="${SCRIPT_DIR}/../certs"
+exec "${CLAMAV_BIN}" --database="${DB_DIR}" "$@"

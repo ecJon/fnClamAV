@@ -1,0 +1,21 @@
+#!/bin/bash
+
+### This script is called after the user installs the application.
+
+# 初始化 ClamAV 病毒库
+APP_DIR="$(dirname "$(readlink -f "$0")")/../"
+DB_DIR="${APP_DIR}/share/clamav"
+
+# 确保病毒库目录存在
+mkdir -p "${DB_DIR}"
+
+# 如果目录为空，尝试从系统复制或提示下载
+if [ -z "$(ls -A ${DB_DIR}/*.cvd ${DB_DIR}/*.cld 2>/dev/null)" ]; then
+    # 如果系统已有病毒库，复制过来
+    if [ -d "/var/lib/clamav" ] && [ -n "$(ls -A /var/lib/clamav/*.cvd /var/lib/clamav/*.cld 2>/dev/null)" ]; then
+        echo "🦠 Copying virus database from system..."
+        cp -f /var/lib/clamav/*.cvd /var/lib/clamav/*.cld "${DB_DIR}/" 2>/dev/null || true
+    fi
+fi
+
+exit 0

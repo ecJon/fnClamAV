@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClamAV 杀毒软件</title>
+    <link rel="stylesheet" href="./css/style.css">
+    <script src="./js/vue.global.prod.js"></script>
+</head>
+<body>
+    <div id="app">
+        <div class="app-container">
+            <!-- 顶部导航栏 -->
+            <header class="header">
+                <div class="header-content">
+                    <div class="logo-area">
+                        <img src="./images/icon.png" alt="ClamAV" class="logo" onerror="this.style.display='none'">
+                        <h1>ClamAV 杀毒软件</h1>
+                    </div>
+                    <div class="status-badge" :class="{ active: systemStatus.is_scanning }">
+                        <span class="status-dot"></span>
+                        {{ systemStatus.is_scanning ? '扫描中' : '就绪' }}
+                    </div>
+                </div>
+            </header>
+
+            <!-- 主要内容区域 -->
+            <main class="main-content">
+                <!-- 快速操作区 -->
+                <section class="quick-actions">
+                    <button class="action-btn primary" @click="startFullScan" :disabled="systemStatus.is_scanning">
+                        <span class="btn-icon">🔍</span>
+                        <span>{{ systemStatus.is_scanning ? '扫描进行中...' : '全盘扫描' }}</span>
+                    </button>
+                    <button class="action-btn secondary" @click="startCustomScan" :disabled="systemStatus.is_scanning">
+                        <span class="btn-icon">📁</span>
+                        <span>自定义扫描</span>
+                    </button>
+                    <button class="action-btn secondary" @click="stopScan" :disabled="!systemStatus.is_scanning">
+                        <span class="btn-icon">⏹</span>
+                        <span>停止扫描</span>
+                    </button>
+                    <button class="action-btn secondary" @click="startUpdate" :disabled="updateStatus.is_updating">
+                        <span class="btn-icon">🔄</span>
+                        <span>{{ updateStatus.is_updating ? '更新中...' : '更新病毒库' }}</span>
+                    </button>
+                </section>
+
+                <!-- 扫描进度 -->
+                <section v-if="scanStatus.scan_id" class="scan-progress-card">
+                    <h3>扫描进度</h3>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" :style="{ width: scanStatus.progress?.percent + '%' }"></div>
+                        </div>
+                        <span class="progress-text">{{ Math.round(scanStatus.progress?.percent || 0) }}%</span>
+                    </div>
+                    <div class="progress-info">
+                        <p>已扫描: {{ scanStatus.progress?.scanned || 0 }} / {{ scanStatus.progress?.estimated_total || '?' }} 文件</p>
+                        <p v-if="scanStatus.progress?.current_file" class="current-file">
+                            正在扫描: <code>{{ truncatePath(scanStatus.progress.current_file) }}</code>
+                        </p>
+                        <p v-if="scanStatus.threats?.count" class="threats-count">
+                            发现威胁: {{ scanStatus.threats.count }} 个
+                        </p>
+                    </div>
+                </section>
+
+                <!-- 统计卡片 -->
+                <section class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">🛡️</div>
+                        <div class="stat-content">
+                            <h4>病毒库版本</h4>
+                            <p>{{ virusVersion.version || '未知' }}</p>
+                            <small>{{ virusVersion.date || '-' }}</small>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📊</div>
+                        <div class="stat-content">
+                            <h4>扫描历史</h4>
+                            <p>{{ scanHistory.length }} 次</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🦠</div>
+                        <div class="stat-content">
+                            <h4>隔离文件</h4>
+                            <p>{{ quarantineList.length }} 个</p>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-content">
+                            <h4>发现威胁</h4>
+                            <p>{{ totalThreats }} 个</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Tab内容 -->
+                <section class="tabs-section">
+                    <div class="tabs">
+                        <button
+                            v-for="tab in tabs"
+                            :key="tab.key"
+                            class="tab-btn"
+                            :class="{ active: activeTab === tab.key }"
+                            @click="activeTab = tab.key"
+                        >
+                            {{ tab.label }}
+                        </button>
+                    </div>
+
+                    <!-- 威胁列表 -->
+                    <div v-show="activeTab === 'threats'" class="tab-content">
+                        <div v-if="threats.length === 0" class="empty-state">
+                            <p>暂无威胁记录</p>
+                        </div>
+                        <div v-else class="threats-list">
+                            <div v-for="threat in threats" :key="threat.id" class="threat-item">
+                                <div class="threat-info">
+                                    <h4>{{ threat.virus_name }}</h4>
+                                    <p>{{ threat.file_path }}</p>
+                                    <small>{{ new Date(threat.detected_time * 1000).toLocaleString() }}</small>
+                                </div>
+                                <div class="threat-actions">
+                                    <button class="btn-small danger" @click="handleThreat(threat.id, 'quarantine')">
+                                        隔离
+                                    </button>
+                                    <button class="btn-small" @click="handleThreat(threat.id, 'ignore')">
+                                        忽略
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 隔离区 -->
+                    <div v-show="activeTab === 'quarantine'" class="tab-content">
+                        <div class="quarantine-header">
+                            <button class="btn-small secondary" @click="cleanupQuarantine">清理隔离区</button>
+                        </div>
+                        <div v-if="quarantineList.length === 0" class="empty-state">
+                            <p>隔离区为空</p>
+                        </div>
+                        <div v-else class="quarantine-list">
+                            <div v-for="item in quarantineList" :key="item.uuid" class="quarantine-item">
+                                <div class="quarantine-info">
+                                    <h4>{{ item.original_filename }}</h4>
+                                    <p>{{ item.virus_name }}</p>
+                                    <small>{{ new Date(item.quarantined_time * 1000).toLocaleString() }}</small>
+                                </div>
+                                <div class="quarantine-actions">
+                                    <button class="btn-small primary" @click="restoreQuarantine(item.uuid)">
+                                        恢复
+                                    </button>
+                                    <button class="btn-small danger" @click="deleteQuarantine(item.uuid)">
+                                        删除
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 扫描历史 -->
+                    <div v-show="activeTab === 'history'" class="tab-content">
+                        <div v-if="scanHistory.length === 0" class="empty-state">
+                            <p>暂无扫描历史</p>
+                        </div>
+                        <div v-else class="history-list">
+                            <div v-for="scan in scanHistory" :key="scan.id" class="history-item">
+                                <div class="history-info">
+                                    <h4>{{ scan.scan_type === 'full' ? '全盘扫描' : '自定义扫描' }}</h4>
+                                    <p>扫描路径: <span v-if="Array.isArray(scan.paths)">{{ scan.paths.slice(0, 3).join(', ') }}{{ scan.paths.length > 3 ? '...' : '' }}</span><span v-else>{{ scan.paths }}</span></p>
+                                    <small>{{ new Date(scan.start_time * 1000).toLocaleString() }}</small>
+                                </div>
+                                <div class="history-stats">
+                                    <span class="status-badge" :class="scan.status">{{ scan.status }}</span>
+                                    <span>{{ scan.scanned_files }} / {{ scan.total_files }} 文件</span>
+                                    <span v-if="scan.threats_found > 0" class="threats-count">
+                                        {{ scan.threats_found }} 威胁
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 更新历史 -->
+                    <div v-show="activeTab === 'updates'" class="tab-content">
+                        <div class="update-info">
+                            <h3>病毒库信息</h3>
+                            <p>当前版本: {{ virusVersion.version || '未知' }}</p>
+                            <p>更新日期: {{ virusVersion.date || '未知' }}</p>
+                        </div>
+                        <h4>更新历史</h4>
+                        <div v-if="updateHistory.length === 0" class="empty-state">
+                            <p>暂无更新历史</p>
+                        </div>
+                        <div v-else class="update-list">
+                            <div v-for="update in updateHistory" :key="update.id" class="update-item">
+                                <div class="update-info">
+                                    <h4>{{ update.old_version }} → {{ update.new_version }}</h4>
+                                    <p>{{ new Date(update.update_time * 1000).toLocaleString() }}</p>
+                                    <span class="status-badge" :class="update.status">{{ update.status }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 设置 -->
+                    <div v-show="activeTab === 'settings'" class="tab-content">
+                        <div class="settings-form">
+                            <div class="form-group">
+                                <label>扫描路径</label>
+                                <textarea v-model="config.scan_paths" rows="3" placeholder="/&#10;/home&#10;/mnt/data"></textarea>
+                                <small>每行一个路径</small>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" v-model="config.auto_update">
+                                    自动更新病毒库
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" v-model="config.quarantine_enabled">
+                                    启用隔离区
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label>威胁处理方式</label>
+                                <select v-model="config.threat_action">
+                                    <option value="quarantine">隔离</option>
+                                    <option value="remove">删除</option>
+                                    <option value="ignore">仅记录</option>
+                                </select>
+                            </div>
+                            <button class="action-btn primary" @click="saveConfig">保存设置</button>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <!-- 通知提示 -->
+            <div v-if="notification.show" class="notification" :class="notification.type">
+                {{ notification.message }}
+            </div>
+        </div>
+    </div>
+
+    <script src="./js/app.js"></script>
+</body>
+</html>

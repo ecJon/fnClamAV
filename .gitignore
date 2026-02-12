@@ -1,0 +1,53 @@
+# Node modules
+node_modules/
+
+# Claude Code
+.claude/
+.playwright-mcp/
+
+# Rust build artifacts
+rust-server/target/
+rust-cgi/target/
+**/*.rs.bk
+Cargo.lock
+
+# ClamAV source and build
+clamAV/
+clamAV/build/
+
+# Application build outputs
+app/server/
+app/bin/*.bin
+dist/
+
+# Data directories (runtime only)
+data/clamav/*.cld
+data/clamav/*.cvd
+data/history.db*
+
+# Temporary files
+*.tmp
+*.log
+*.pid
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+*.fpk
+*.o
+*.a
+*.so
+
+# fnpack tool (binary)
+fnpack-1.2.1-linux-amd64
+
+# Package manager lock (optional)
+# package-lock.json
