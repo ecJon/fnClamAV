@@ -67,8 +67,8 @@ impl ScanTarget {
 /// 进度回调类型
 pub type ProgressCallback = Arc<dyn Fn(ScanProgress) + Send + Sync>;
 
-/// 完成回调类型（使用引用，因为 anyhow::Error 不实现 Clone）
-pub type CompletionCallback = Arc<dyn Fn(&Result<ScanOutcome>) + Send + Sync>;
+/// 完成回调类型 (task_id, result，使用引用因为 anyhow::Error 不实现 Clone)
+pub type CompletionCallback = Arc<dyn Fn(&str, &Result<ScanOutcome>) + Send + Sync>;
 
 /// 扫描任务状态
 #[derive(Debug, Clone, PartialEq)]
@@ -507,7 +507,7 @@ impl ScanEngine {
         let cb = completion_callback.lock().await;
         if let Some(ref callback) = *cb {
             tracing::info!("Calling completion callback for task {}", task_id);
-            callback(&result);
+            callback(&task_id, &result);
         }
         drop(cb);
     }

@@ -107,35 +107,53 @@ impl ScanService {
             });
         }).await;
 
-        // 设置完成回调
+        // 设置完成回调（接收 task_id，根据 task_id 查找对应的 scan_id）
         let db_clone = self.db.clone();
-        let scan_id_for_completion = scan_id.clone();
-        self.clamav.set_completion_callback(move |result| {
+        let active_scans_clone = self.active_scans.clone();
+        self.clamav.set_completion_callback(move |task_id, result| {
             let db = db_clone.clone();
-            let scan_id = scan_id_for_completion.clone();
+
+            // 根据 task_id 查找对应的 scan_id（使用 block_in_place 在同步上下文中执行异步操作）
+            let scan_id = tokio::task::block_in_place(|| {
+                let scans = active_scans_clone.try_read();
+                if let Ok(scans) = scans {
+                    scans.iter()
+                        .find(|(_, s)| s.task_id == task_id)
+                        .map(|(id, _)| id.clone())
+                } else {
+                    None
+                }
+            });
+
+            let scan_id = match scan_id {
+                Some(id) => id,
+                None => {
+                    tracing::error!("Cannot find scan_id for task_id={}, skipping completion callback", task_id);
+                    return;
+                }
+            };
 
             match result {
                 Ok(outcome) => {
-                    tracing::info!("Scan completed successfully: scan_id={}, total={}, scanned={}, threats={}",
-                                  scan_id, outcome.total_files, outcome.scanned_files, outcome.threats.len());
+                    tracing::info!("Scan completed successfully: scan_id={}, task_id={}, total={}, scanned={}, threats={}",
+                                  scan_id, task_id, outcome.total_files, outcome.scanned_files, outcome.threats.len());
 
                     // 直接更新数据库
                     let total = outcome.total_files as i32;
-                    let scanned = outcome.scanned_files as i32;
                     let threats_count = outcome.threats.len();
                     let status = "completed";
                     let error_msg = if threats_count == 0 {
-                        Some("扫描完成，未发现威胁")
+                        "扫描完成，未发现威胁"
                     } else {
-                        Some("扫描完成，发现威胁")
+                        "扫描完成，发现威胁"
                     };
 
                     tokio::spawn(async move {
-                        let _ = db.finish_scan(&scan_id, status, total, error_msg);
+                        let _ = db.finish_scan(&scan_id, status, total, Some(error_msg));
                     });
                 }
                 Err(e) => {
-                    tracing::error!("Scan failed: scan_id={}, error={:?}", scan_id, e);
+                    tracing::error!("Scan failed: scan_id={}, task_id={}, error={:?}", scan_id, task_id, e);
                     // 扫描失败时也要更新数据库
                     let error_msg = e.to_string();
                     tokio::spawn(async move {

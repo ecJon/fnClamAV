@@ -153,10 +153,10 @@ impl ClamavService {
         }
     }
 
-    /// 设置完成回调
+    /// 设置完成回调 (task_id, result)
     pub async fn set_completion_callback<F>(&self, callback: F)
     where
-        F: Fn(&Result<ScanOutcome>) + Send + Sync + 'static,
+        F: Fn(&str, &Result<ScanOutcome>) + Send + Sync + 'static,
     {
         match self.get_scan_engine().await {
             Ok(engine) => {
