@@ -102,44 +102,44 @@ pub async fn scan_status(
     // 首先检查是否有活跃的扫描（从内存中获取实时数据）
     let scan_service = state.scan_service.read().await;
     let current_scan_id = scan_service.get_current_scan_id().await;
+
+    // 优先从内存获取实时进度数据
+    let realtime_progress = scan_service.get_current_scan_progress().await;
     drop(scan_service);
 
-    // 如果有活跃扫描，优先返回活跃扫描的数据
-    if let Some(scan_id) = current_scan_id {
-        // 从数据库获取该扫描的详细信息
-        if let Ok(Some(scan)) = state.db.get_scan_by_id(&scan_id) {
-            let elapsed = chrono::Utc::now().timestamp() - scan.start_time;
-            let scan_status = scan.status.clone();
-            let is_scanning = scan_status == "scanning";
+    // 如果有活跃扫描且有实时进度数据，优先返回实时数据
+    if let (Some(scan_id), Some(progress)) = (current_scan_id, realtime_progress) {
+        let elapsed = chrono::Utc::now().timestamp() - progress.created_at.timestamp();
+        let scan_status = progress.status.clone();
+        let is_scanning = scan_status == "scanning";
 
-            return Json(ScanStatusResponse {
-                scan_id: Some(scan.scan_id),
-                status: scan_status,
-                progress: if is_scanning || scan.status == "completed" {
-                    Some(ScanProgress {
-                        percent: if scan.total_files > 0 {
-                            (scan.scanned_files as f32 / scan.total_files as f32) * 100.0
-                        } else {
-                            0.0
-                        },
-                        scanned: scan.scanned_files as u64,
-                        estimated_total: scan.total_files as u64,
-                        current_file: scan.current_file.unwrap_or_default(),
-                    })
-                } else {
-                    None
-                },
-                threats: Some(ThreatsInfo {
-                    count: scan.threats_found as u32,
-                    files: vec![],
-                }),
-                start_time: Some(scan.start_time),
-                elapsed_seconds: Some(elapsed.max(0) as u64),
-            });
-        }
+        return Json(ScanStatusResponse {
+            scan_id: Some(progress.scan_id.clone()),
+            status: scan_status.clone(),
+            progress: if is_scanning || scan_status == "completed" {
+                Some(ScanProgress {
+                    percent: if progress.total_files > 0 {
+                        (progress.scanned_files as f32 / progress.total_files as f32) * 100.0
+                    } else {
+                        0.0
+                    },
+                    scanned: progress.scanned_files as u64,
+                    estimated_total: progress.total_files as u64,
+                    current_file: progress.current_file.clone().unwrap_or_default(),
+                })
+            } else {
+                None
+            },
+            threats: Some(ThreatsInfo {
+                count: progress.threats_found as u32,
+                files: vec![],
+            }),
+            start_time: Some(progress.created_at.timestamp()),
+            elapsed_seconds: Some(elapsed.max(0) as u64),
+        });
     }
 
-    // 没有活跃扫描，从数据库获取最近的状态
+    // 没有实时进度数据，回退到从数据库获取最近的状态
     match state.db.get_current_scan() {
         Ok(Some(scan)) => {
             let elapsed = chrono::Utc::now().timestamp() - scan.start_time;

@@ -73,38 +73,48 @@ pub async fn update_version(
     let mut main_version = None;
     let mut bytecode_version = None;
 
-    // 尝试读取 freshclam.dat 获取版本
-    let freshclam_dat = format!("{}/freshclam.dat", db_dir);
-    if let Ok(content) = std::fs::read_to_string(&freshclam_dat) {
-        // 解析版本信息
-        for line in content.lines() {
-            if line.starts_with("Daily:") {
-                daily_version = Some(line.split(':').nth(1).unwrap_or("unknown").trim().to_string());
-            } else if line.starts_with("Main:") {
-                main_version = Some(line.split(':').nth(1).unwrap_or("unknown").trim().to_string());
-            } else if line.starts_with("Bytecode:") {
-                bytecode_version = Some(line.split(':').nth(1).unwrap_or("unknown").trim().to_string());
-            }
-        }
-    }
-
-    // 备选方案：检查 .cvd/.cld 文件的修改时间
-    if daily_version.is_none() {
-        if let Ok(entries) = std::fs::read_dir(&db_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.contains("daily") {
-                    if let Ok(meta) = entry.metadata() {
-                        if let Ok(mtime) = meta.modified() {
-                            let age_days = chrono::Utc::now().timestamp() - mtime.elapsed().unwrap().as_secs() as i64;
-                            daily_version = Some(format!("{} days old", age_days / 86400));
+    // 从 CVD/CLD 文件头解析版本信息
+    // CVD 文件头格式: ClamAV-VDB:日期:版本号:...
+    fn parse_cvd_version(path: &str) -> Option<String> {
+        use std::io::Read;
+        if let Ok(mut file) = std::fs::File::open(path) {
+            let mut header = [0u8; 512];
+            if file.read(&mut header).is_ok() {
+                // 转换为字符串并查找版本号
+                if let Ok(header_str) = std::str::from_utf8(&header) {
+                    // 格式: ClamAV-VDB:10 Feb 2026 07-25 +0000:27908:...
+                    // 版本号在第三个冒号分隔的位置
+                    let parts: Vec<&str> = header_str.split(':').collect();
+                    if parts.len() >= 3 {
+                        let version = parts[2].trim();
+                        // 验证是否为数字
+                        if version.parse::<u32>().is_ok() {
+                            return Some(version.to_string());
                         }
                     }
                 }
             }
         }
+        None
     }
+
+    // 检查 daily.cvd 或 daily.cld
+    let daily_path = format!("{}/daily.cvd", db_dir);
+    let daily_path_cld = format!("{}/daily.cld", db_dir);
+    daily_version = parse_cvd_version(&daily_path)
+        .or_else(|| parse_cvd_version(&daily_path_cld));
+
+    // 检查 main.cvd 或 main.cld
+    let main_path = format!("{}/main.cvd", db_dir);
+    let main_path_cld = format!("{}/main.cld", db_dir);
+    main_version = parse_cvd_version(&main_path)
+        .or_else(|| parse_cvd_version(&main_path_cld));
+
+    // 检查 bytecode.cvd 或 bytecode.cld
+    let bytecode_path = format!("{}/bytecode.cvd", db_dir);
+    let bytecode_path_cld = format!("{}/bytecode.cld", db_dir);
+    bytecode_version = parse_cvd_version(&bytecode_path)
+        .or_else(|| parse_cvd_version(&bytecode_path_cld));
 
     Json(json!({
         "version": {
@@ -112,7 +122,7 @@ pub async fn update_version(
             "main": main_version,
             "bytecode": bytecode_version
         },
-        "age_days": None::<Option<f64>>  // TODO: 计算
+        "age_days": None::<Option<f64>>
     }))
 }
 

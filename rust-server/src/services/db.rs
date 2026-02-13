@@ -4,6 +4,14 @@ use std::path::Path;
 pub fn init_db(db_path: &str) -> SqliteResult<()> {
     let mut conn = Connection::open(db_path)?;
 
+    // 清理僵尸记录：将所有未完成的扫描标记为失败
+    // 这些记录可能是服务异常中断时遗留的
+    conn.execute(
+        "UPDATE scan_history SET status = 'failed', error_message = 'Service interrupted'
+         WHERE status = 'scanning'",
+        [],
+    )?;
+
     // 创建扫描历史表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS scan_history (
@@ -145,14 +153,18 @@ impl Database {
 
     pub fn update_scan_progress(&self, scan_id: &str, scanned_files: i32, total_files: i32, current_file: Option<&str>) -> SqliteResult<()> {
         let conn = self.get_conn()?;
+
+        // 关键：只更新状态为 "scanning" 的记录
+        // 这样可以防止异步进度更新覆盖已完成的状态
+        // 一旦 finish_scan 将状态改为 completed/failed，后续的异步进度更新将被忽略
         if let Some(file) = current_file {
             conn.execute(
-                "UPDATE scan_history SET scanned_files = ?1, total_files = ?2, current_file = ?3 WHERE scan_id = ?4",
+                "UPDATE scan_history SET scanned_files = ?1, total_files = ?2, current_file = ?3 WHERE scan_id = ?4 AND status = 'scanning'",
                 [scanned_files.to_string(), total_files.to_string(), file.to_string(), scan_id.to_string()],
             )?;
         } else {
             conn.execute(
-                "UPDATE scan_history SET scanned_files = ?1, total_files = ?2 WHERE scan_id = ?3",
+                "UPDATE scan_history SET scanned_files = ?1, total_files = ?2 WHERE scan_id = ?3 AND status = 'scanning'",
                 [scanned_files.to_string(), total_files.to_string(), scan_id.to_string()],
             )?;
         }
@@ -178,8 +190,9 @@ impl Database {
         let conn = self.get_conn()?;
         let end_time = chrono::Utc::now().timestamp();
 
+        // 完成扫描时，scanned_files 应该等于 total_files
         conn.execute(
-            "UPDATE scan_history SET status = ?1, end_time = ?2, total_files = ?3, error_message = ?4
+            "UPDATE scan_history SET status = ?1, end_time = ?2, total_files = ?3, scanned_files = ?3, error_message = ?4
              WHERE scan_id = ?5",
             [
                 status,

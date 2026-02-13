@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 pub struct AppState {
     pub env: FnosEnv,
     pub db: Arc<Database>,
+    pub clamav: Arc<ClamavService>,
     pub scan_service: Arc<tokio::sync::RwLock<ScanService>>,
     pub update_service: Arc<tokio::sync::RwLock<UpdateService>>,
 }
@@ -26,10 +27,10 @@ impl AppState {
         };
 
         // 创建 ClamAV 服务
-        let clamav = ClamavService::new(clamav_config);
+        let clamav = Arc::new(ClamavService::new(clamav_config));
 
         let scan_service = Arc::new(tokio::sync::RwLock::new(
-            ScanService::new(db.clone(), clamav.clone())
+            ScanService::new(db.clone(), (*clamav).clone())
         ));
 
         let update_service = Arc::new(tokio::sync::RwLock::new(
@@ -39,6 +40,7 @@ impl AppState {
         Self {
             env,
             db,
+            clamav,
             scan_service,
             update_service,
         }

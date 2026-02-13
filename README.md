@@ -42,12 +42,11 @@
 
 | 层级 | 技术 |
 |------|------|
-| 前端 | Vue.js 3 + WebSocket |
+| 前端 | Vue.js 3 |
+| CGI | Bash (转发) / Rust CGI (备用) |
 | 后端 | Rust (Axum) |
-| 实时通信 | WebSocket |
 | 杀毒引擎 | ClamAV 1.5.1 (FFI) |
 | 数据库 | SQLite (rusqlite) |
-| CGI | Bash |
 
 ## 项目结构
 
@@ -73,9 +72,9 @@
 │   │   ├── clamav/          # ClamAV FFI 绑定
 │   │   ├── services/        # 业务服务层
 │   │   ├── handlers/        # HTTP 处理器
-│   │   ├── websocket/       # WebSocket 服务
 │   │   └── models/          # 数据模型
 │   └── Cargo.toml
+├── rust-cgi/                # Rust CGI 独立实现（备用，轻量部署）
 ├── clamAV/                  # ClamAV 源码 (git 子模块)
 ├── manifest                 # 应用清单
 ├── ICON.PNG                 # 64x64 图标

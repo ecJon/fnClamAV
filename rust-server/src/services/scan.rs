@@ -25,11 +25,17 @@ pub struct ScanService {
 
 /// 活跃的扫描任务
 #[derive(Clone)]
-struct ActiveScan {
-    scan_id: String,
-    task_id: String,
-    paths: Vec<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
+pub struct ActiveScan {
+    pub scan_id: String,
+    pub task_id: String,
+    pub paths: Vec<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    // 实时进度数据（用于前端查询，避免异步数据库更新导致的时序问题）
+    pub scanned_files: u32,
+    pub total_files: u32,
+    pub current_file: Option<String>,
+    pub threats_found: u32,
+    pub status: String,  // "scanning", "completed", "failed", "paused"
 }
 
 impl ScanService {
@@ -69,8 +75,8 @@ impl ScanService {
         let target = targets.into_iter().next().unwrap();
         tracing::info!("Scan target: {:?}", target);
 
-        // 初始化数据库记录（在移动 paths 之前）
-        let _ = self.db.create_scan(&scan_id, "full", &paths);
+        // 注意：数据库记录由 handler 层负责创建，这里不需要重复创建
+        // handlers/scan.rs 已经在调用 start_scan 之前创建了记录并传入了正确的 scan_type
 
         // 记录活跃扫描
         let active_scan = ActiveScan {
@@ -78,6 +84,11 @@ impl ScanService {
             task_id: String::new(), // 临时值，下面会更新
             paths,
             created_at: chrono::Utc::now(),
+            scanned_files: 0,
+            total_files: 0,
+            current_file: None,
+            threats_found: 0,
+            status: "scanning".to_string(),
         };
 
         let mut scans = self.active_scans.write().await;
@@ -86,9 +97,11 @@ impl ScanService {
 
         // 设置进度回调（在提交任务之前）
         let db = self.db.clone();
+        let active_scans_for_progress = self.active_scans.clone();
         let scan_id_for_callback = scan_id.clone();
         self.clamav.set_progress_callback(move |progress| {
             let db = db.clone();
+            let active_scans = active_scans_for_progress.clone();
             let scan_id = scan_id_for_callback.clone();
             let scanned = progress.scanned_files.0;
             let total = progress.total_files.0;
@@ -97,14 +110,40 @@ impl ScanService {
             let threats = progress.threats_found.0;
             tracing::debug!("Progress update: scan_id={}, scanned={}/{}, percent={}, current_file={:?}, threats={}",
                           scan_id, scanned, total, percent, current_file, threats);
-            tokio::spawn(async move {
-                let _ = db.update_scan_progress(
-                    &scan_id,
-                    scanned as i32,
-                    total as i32,
-                    current_file.as_deref(),
-                );
-            });
+
+            // 同步更新内存中的实时状态（确保前端获取最新数据）
+            let scans = active_scans.try_read();
+            if let Ok(scans) = scans {
+                if let Some(scan) = scans.get(&scan_id) {
+                    // 注意：这里使用 block_in_place 在同步上下文中获取写锁
+                    let _ = tokio::task::block_in_place(|| {
+                        let mut scans_w = active_scans.try_write();
+                        if let Ok(mut scans) = scans_w {
+                            if let Some(s) = scans.get_mut(&scan_id) {
+                                s.scanned_files = scanned;
+                                s.total_files = total;
+                                s.current_file = current_file.clone();
+                                s.threats_found = threats;
+                            }
+                        }
+                    });
+                }
+            }
+
+            // 只有未完成时才更新数据库进度（避免覆盖完成状态）
+            // 当 scanned >= total 时，说明扫描已完成，不需要再更新进度
+            if scanned < total {
+                tokio::spawn(async move {
+                    let _ = db.update_scan_progress(
+                        &scan_id,
+                        scanned as i32,
+                        total as i32,
+                        current_file.as_deref(),
+                    );
+                });
+            } else {
+                tracing::debug!("Skipping progress update for scan_id={}, scan already completed ({} >= {})", scan_id, scanned, total);
+            }
         }).await;
 
         // 设置完成回调（接收 task_id，根据 task_id 查找对应的 scan_id）
@@ -139,29 +178,25 @@ impl ScanService {
                     tracing::info!("Scan completed successfully: scan_id={}, task_id={}, total={}, scanned={}, threats={}",
                                   scan_id, task_id, outcome.total_files, outcome.scanned_files, outcome.threats.len());
 
-                    // 直接更新数据库
+                    // 同步更新数据库，确保完成状态最后写入（避免与异步进度更新产生竞态条件）
                     let total = outcome.total_files as i32;
                     let threats_count = outcome.threats.len();
                     let status = "completed";
-                    let scan_id_for_async = scan_id.clone();
                     let error_msg = if threats_count == 0 {
                         "扫描完成，未发现威胁"
                     } else {
                         "扫描完成，发现威胁"
                     };
 
-                    tokio::spawn(async move {
-                        let _ = db.finish_scan(&scan_id_for_async, status, total, Some(error_msg));
-                    });
+                    // 直接同步调用，不使用 tokio::spawn
+                    let _ = db.finish_scan(&scan_id, status, total, Some(error_msg));
                 }
                 Err(e) => {
                     tracing::error!("Scan failed: scan_id={}, task_id={}, error={:?}", scan_id, task_id, e);
                     // 扫描失败时也要更新数据库
                     let error_msg = e.to_string();
-                    let scan_id_for_async = scan_id.clone();
-                    tokio::spawn(async move {
-                        let _ = db.finish_scan(&scan_id_for_async, "failed", 0, Some(error_msg.as_str()));
-                    });
+                    // 直接同步调用，不使用 tokio::spawn
+                    let _ = db.finish_scan(&scan_id, "failed", 0, Some(error_msg.as_str()));
                 }
             }
 
@@ -268,6 +303,12 @@ impl ScanService {
     pub async fn get_current_scan_id(&self) -> Option<String> {
         let scans = self.active_scans.read().await;
         scans.keys().next().cloned()
+    }
+
+    /// 获取当前扫描的实时进度（从内存中读取，避免数据库异步更新导致的时序问题）
+    pub async fn get_current_scan_progress(&self) -> Option<ActiveScan> {
+        let scans = self.active_scans.read().await;
+        scans.values().next().cloned()
     }
 
     /// 检查是否有扫描正在进行
