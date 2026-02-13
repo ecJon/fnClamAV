@@ -333,6 +333,46 @@ createApp({
             }
         },
 
+        // 删除单条扫描历史
+        async deleteScanHistory(id) {
+            try {
+                const result = await this.apiRequest(`scan/history/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (result.success) {
+                    this.showNotification('记录已删除', 'success');
+                    await this.loadScanHistory();
+                } else {
+                    this.showNotification(result.error || '删除失败', 'error');
+                }
+            } catch (error) {
+                this.showNotification('删除失败: ' + error.message, 'error');
+            }
+        },
+
+        // 清空所有扫描历史
+        async clearScanHistory() {
+            if (!confirm('确定要清空所有扫描历史记录吗？')) {
+                return;
+            }
+
+            try {
+                const result = await this.apiRequest('scan/history/clear', {
+                    method: 'POST'
+                });
+
+                if (result.success) {
+                    this.showNotification('扫描历史已清空', 'success');
+                    await this.loadScanHistory();
+                } else {
+                    this.showNotification(result.error || '清空失败', 'error');
+                }
+            } catch (error) {
+                this.showNotification('清空失败: ' + error.message, 'error');
+            }
+        },
+
         // 加载更新历史
         async loadUpdateHistory() {
             try {

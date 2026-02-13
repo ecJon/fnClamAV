@@ -759,3 +759,46 @@ body {
 .app-container {
     position: relative;
 }
+
+/* ==================== History Header ==================== */
+.history-header {
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+/* ==================== History Actions ==================== */
+.history-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: 12px;
+}
+
+.history-item {
+    display: flex;
+    align-items: center;
+}
+
+.history-item .history-info {
+    flex: 1;
+}
+
+.history-item .history-stats {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+@media (max-width: 768px) {
+    .history-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .history-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-left: 0;
+        margin-top: 8px;
+    }
+}

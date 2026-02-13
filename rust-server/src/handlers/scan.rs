@@ -218,6 +218,37 @@ pub async fn scan_history(
     }
 }
 
+/// 删除单条扫描历史记录
+pub async fn delete_scan_history(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Json<serde_json::Value> {
+    match state.db.delete_scan_history(id) {
+        Ok(()) => Json(json!({
+            "success": true
+        })),
+        Err(e) => Json(json!({
+            "success": false,
+            "error": e.to_string()
+        }))
+    }
+}
+
+/// 清空所有扫描历史记录
+pub async fn clear_scan_history(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    match state.db.clear_scan_history() {
+        Ok(()) => Json(json!({
+            "success": true
+        })),
+        Err(e) => Json(json!({
+            "success": false,
+            "error": e.to_string()
+        }))
+    }
+}
+
 // 获取全盘扫描路径
 fn get_full_scan_paths() -> Vec<String> {
     let mut paths = Vec::new();

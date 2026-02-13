@@ -326,6 +326,23 @@ impl Database {
         Ok(results)
     }
 
+    /// 删除单条扫描历史记录
+    pub fn delete_scan_history(&self, id: i64) -> SqliteResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "DELETE FROM scan_history WHERE id = ?1",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    /// 清空所有扫描历史记录
+    pub fn clear_scan_history(&self) -> SqliteResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute("DELETE FROM scan_history", [])?;
+        Ok(())
+    }
+
     // === 威胁记录 ===
 
     pub fn add_threat(

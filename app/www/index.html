@@ -195,6 +195,11 @@
 
                     <!-- 扫描历史 -->
                     <div v-show="activeTab === 'history'" class="tab-content">
+                        <div class="history-header">
+                            <button class="btn-small secondary" @click="clearScanHistory" :disabled="scanHistory.length === 0">
+                                清空历史
+                            </button>
+                        </div>
                         <div v-if="scanHistory.length === 0" class="empty-state">
                             <p>暂无扫描历史</p>
                         </div>
@@ -211,6 +216,9 @@
                                     <span v-if="scan.threats_found > 0" class="threats-count">
                                         {{ scan.threats_found }} 威胁
                                     </span>
+                                </div>
+                                <div class="history-actions">
+                                    <button class="btn-small danger" @click="deleteScanHistory(scan.id)">删除</button>
                                 </div>
                             </div>
                         </div>

@@ -88,6 +88,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/scan/stop", post(scan::stop_scan))
         .route("/api/scan/status", get(scan::scan_status))
         .route("/api/scan/history", get(scan::scan_history))
+        .route("/api/scan/history/:id", axum::routing::delete(scan::delete_scan_history))
+        .route("/api/scan/history/clear", post(scan::clear_scan_history))
 
         // 更新相关
         .route("/api/update/start", post(update::start_update))
