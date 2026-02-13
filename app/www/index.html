@@ -68,12 +68,24 @@
 
                 <!-- 统计卡片 -->
                 <section class="stats-grid">
-                    <div class="stat-card">
+                    <div class="stat-card virus-db-card">
                         <div class="stat-icon">🛡️</div>
                         <div class="stat-content">
                             <h4>病毒库版本</h4>
-                            <p>{{ virusVersion.version || '未知' }}</p>
-                            <small>{{ virusVersion.date || '-' }}</small>
+                            <div class="version-details">
+                                <div class="version-item">
+                                    <span class="version-label">每日更新</span>
+                                    <span class="version-num">{{ virusVersion.daily || '未知' }}</span>
+                                </div>
+                                <div class="version-item">
+                                    <span class="version-label">主库</span>
+                                    <span class="version-num">{{ virusVersion.main || '未知' }}</span>
+                                </div>
+                                <div class="version-item">
+                                    <span class="version-label">字节码</span>
+                                    <span class="version-num">{{ virusVersion.bytecode || '未知' }}</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="stat-card">
@@ -189,10 +201,25 @@
 
                     <!-- 更新历史 -->
                     <div v-show="activeTab === 'updates'" class="tab-content">
-                        <div class="update-info">
+                        <div class="virus-db-info">
                             <h3>病毒库信息</h3>
-                            <p>当前版本: {{ virusVersion.version || '未知' }}</p>
-                            <p>更新日期: {{ virusVersion.date || '未知' }}</p>
+                            <div class="db-version-grid">
+                                <div class="db-version-item">
+                                    <span class="db-name">Daily（每日更新）</span>
+                                    <span class="db-version">{{ virusVersion.daily || '未知' }}</span>
+                                    <span class="db-desc">最新病毒定义，每日更新</span>
+                                </div>
+                                <div class="db-version-item">
+                                    <span class="db-name">Main（主库）</span>
+                                    <span class="db-version">{{ virusVersion.main || '未知' }}</span>
+                                    <span class="db-desc">基础病毒定义库</span>
+                                </div>
+                                <div class="db-version-item">
+                                    <span class="db-name">Bytecode（字节码）</span>
+                                    <span class="db-version">{{ virusVersion.bytecode || '未知' }}</span>
+                                    <span class="db-desc">可执行签名，检测复杂威胁</span>
+                                </div>
+                            </div>
                         </div>
                         <h4>更新历史</h4>
                         <div v-if="updateHistory.length === 0" class="empty-state">

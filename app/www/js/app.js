@@ -191,24 +191,30 @@ createApp({
         async loadVirusVersion() {
             try {
                 const data = await this.apiRequest('update/version');
-                // 解析病毒库版本数据
                 const versionInfo = data.version || {};
-                const dailyVersion = versionInfo.daily || '未知';
-                const mainVersion = versionInfo.main || '未知';
 
                 // 提取实际版本号（去掉 "days old" 后缀）
                 const extractVersion = (v) => {
-                    if (!v || v === '未知') return '未知';
-                    return v.replace(/\s*days\s*old.*/gi, '').trim() || v;
+                    if (!v || v === '未知') return null;
+                    return v.replace(/\s*days\s*old.*/gi, '').trim() || null;
                 };
 
+                const daily = extractVersion(versionInfo.daily);
+                const main = extractVersion(versionInfo.main);
+                const bytecode = extractVersion(versionInfo.bytecode);
+
+                // 格式化版本显示
                 this.virusVersion = {
-                    version: extractVersion(dailyVersion),
-                    date: mainVersion !== '未知' ? mainVersion : (extractVersion(dailyVersion) || '未知')
+                    daily: daily || '未知',
+                    main: main || '未知',
+                    bytecode: bytecode || '未知',
+                    // 兼容旧的显示方式
+                    version: daily ? `Daily ${daily}` : '未知',
+                    date: main ? `Main ${main}` : '-'
                 };
             } catch (error) {
                 console.error('Failed to load virus version:', error);
-                this.virusVersion = { version: '未知', date: '-' };
+                this.virusVersion = { daily: '未知', main: '未知', bytecode: '未知', version: '未知', date: '-' };
             }
         },
 

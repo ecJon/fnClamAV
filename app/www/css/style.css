@@ -601,3 +601,90 @@ body {
     color: #555;
     font-size: 12px;
 }
+
+/* ==================== Virus DB Version Display ==================== */
+.virus-db-card {
+    grid-column: span 1;
+}
+
+.virus-db-card .stat-content {
+    flex: 1;
+}
+
+.version-details {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.version-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.version-label {
+    color: #9ca3af;
+    min-width: 60px;
+}
+
+.version-num {
+    font-weight: 600;
+    color: #374151;
+}
+
+/* 病毒库更新页面 */
+.virus-db-info {
+    background: white;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.virus-db-info h3 {
+    font-size: 16px;
+    color: #1f2937;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.db-version-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+}
+
+.db-version-item {
+    background: #f9fafb;
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.db-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #374151;
+}
+
+.db-version {
+    font-size: 24px;
+    font-weight: 700;
+    color: #667eea;
+}
+
+.db-desc {
+    font-size: 12px;
+    color: #9ca3af;
+}
+
+@media (max-width: 768px) {
+    .db-version-grid {
+        grid-template-columns: 1fr;
+    }
+}
