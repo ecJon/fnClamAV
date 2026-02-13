@@ -688,3 +688,74 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+/* ==================== Connection Status ==================== */
+.status-badge.disconnected {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.status-badge.disconnected .status-dot {
+    background: #dc2626;
+    animation: pulse-red 1.5s ease infinite;
+}
+
+@keyframes pulse-red {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* ==================== Connecting Overlay ==================== */
+.connecting-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.95);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    border-radius: 0 0 16px 16px;
+}
+
+.connecting-content {
+    text-align: center;
+    padding: 40px;
+}
+
+.connecting-spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid #e5e7eb;
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 20px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.connecting-content p {
+    font-size: 16px;
+    color: #374151;
+    margin-bottom: 8px;
+}
+
+.connecting-hint {
+    font-size: 14px;
+    color: #9ca3af;
+}
+
+.disabled-content {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+/* 确保 overlay 定位正确 */
+.app-container {
+    position: relative;
+}

@@ -18,6 +18,14 @@ createApp({
                 { key: 'settings', label: '设置' }
             ],
 
+            // 连接状态
+            connectionStatus: {
+                connected: false,      // 是否已连接到 daemon
+                checking: true,        // 是否正在检查连接
+                lastCheck: null,       // 上次检查时间
+                retryCount: 0          // 重试次数
+            },
+
             // 系统状态
             systemStatus: {
                 is_scanning: false
@@ -83,12 +91,17 @@ createApp({
     computed: {
         totalThreats() {
             return this.scanHistory.reduce((sum, scan) => sum + (scan.threats_found || 0), 0);
+        },
+
+        // 界面是否可用（取决于连接状态）
+        isReady() {
+            return this.connectionStatus.connected;
         }
     },
 
     mounted() {
-        this.loadInitialData();
-        this.startPolling();
+        // 首先检查连接状态
+        this.checkConnection();
     },
 
     beforeUnmount() {
@@ -96,7 +109,7 @@ createApp({
     },
 
     methods: {
-        // API 请求封装
+        // API 请求封装（带连接状态检测）
         async apiRequest(endpoint, options = {}) {
             try {
                 const url = this.apiBase + endpoint;
@@ -112,18 +125,97 @@ createApp({
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
-                return await response.json();
+                const data = await response.json();
+
+                // 检查是否有连接错误
+                if (data.success === false && data.error === 'Failed to connect to daemon') {
+                    this.handleConnectionLost();
+                    throw new Error('无法连接到服务');
+                }
+
+                return data;
             } catch (error) {
                 console.error('API request failed:', error);
-                this.showNotification(error.message, 'error');
                 throw error;
+            }
+        },
+
+        // 检查与 daemon 的连接状态
+        async checkConnection() {
+            this.connectionStatus.checking = true;
+
+            try {
+                const response = await fetch(this.apiBase + 'status');
+                if (!response.ok) {
+                    throw new Error('Connection failed');
+                }
+
+                const data = await response.json();
+
+                // 检查是否是有效的 daemon 响应
+                if (data.success === false && data.error === 'Failed to connect to daemon') {
+                    this.handleConnectionLost();
+                    return false;
+                }
+
+                // 连接成功
+                this.handleConnectionRestored(data);
+                return true;
+            } catch (error) {
+                this.handleConnectionLost();
+                return false;
+            } finally {
+                this.connectionStatus.checking = false;
+            }
+        },
+
+        // 处理连接丢失
+        handleConnectionLost() {
+            const wasConnected = this.connectionStatus.connected;
+            this.connectionStatus.connected = false;
+            this.connectionStatus.retryCount++;
+            this.connectionStatus.lastCheck = new Date();
+
+            if (wasConnected) {
+                this.showNotification('与服务失去连接，正在重连...', 'error');
+            }
+
+            // 如果未连接，每 2 秒重试一次
+            if (!this.connectionStatus.connected) {
+                setTimeout(() => {
+                    this.checkConnection();
+                }, 2000);
+            }
+        },
+
+        // 处理连接恢复
+        handleConnectionRestored(data) {
+            const wasDisconnected = !this.connectionStatus.connected;
+            this.connectionStatus.connected = true;
+            this.connectionStatus.retryCount = 0;
+            this.connectionStatus.lastCheck = new Date();
+
+            // 更新系统状态
+            if (data) {
+                this.systemStatus.is_scanning = data.scan_in_progress || false;
+            }
+
+            if (wasDisconnected) {
+                this.showNotification('已连接到服务', 'success');
+                // 连接恢复后加载数据
+                this.loadInitialData();
+                // 开始常规轮询
+                this.startPolling();
             }
         },
 
         // 加载初始数据
         async loadInitialData() {
+            if (!this.connectionStatus.connected) {
+                return;
+            }
+
             await Promise.all([
-                this.loadSystemStatus(),
                 this.loadVirusVersion(),
                 this.loadThreats(),
                 this.loadQuarantine(),
@@ -131,16 +223,6 @@ createApp({
                 this.loadUpdateHistory(),
                 this.loadConfig()
             ]);
-        },
-
-        // 加载系统状态
-        async loadSystemStatus() {
-            try {
-                const data = await this.apiRequest('status');
-                this.systemStatus.is_scanning = data.scan_in_progress || false;
-            } catch (error) {
-                console.error('Failed to load system status:', error);
-            }
         },
 
         // 加载扫描状态
@@ -517,23 +599,42 @@ createApp({
 
         // 开始轮询状态
         startPolling() {
-            this.pollTimer = setInterval(async () => {
-                // 总是获取系统状态
-                await this.loadSystemStatus();
+            // 避免重复启动
+            if (this.pollTimer) {
+                return;
+            }
 
-                // 只在有扫描进行或显示进度时获取扫描状态
-                if (this.systemStatus.is_scanning || this.uiState.showProgress) {
-                    await this.loadScanStatus();
+            this.pollTimer = setInterval(async () => {
+                // 检查连接状态
+                if (!this.connectionStatus.connected) {
+                    return;
                 }
 
-                // 处理病毒库更新状态
-                if (this.updateStatus.is_updating) {
-                    const data = await this.apiRequest('update/status');
-                    this.updateStatus.is_updating = data.is_updating || false;
-                    if (!this.updateStatus.is_updating) {
-                        await this.loadVirusVersion();
-                        await this.loadUpdateHistory();
+                try {
+                    // 获取系统状态并检测连接
+                    const data = await this.apiRequest('status');
+                    if (data.success === false && data.error === 'Failed to connect to daemon') {
+                        return; // 连接检测会处理
                     }
+                    this.systemStatus.is_scanning = data.scan_in_progress || false;
+
+                    // 只在有扫描进行或显示进度时获取扫描状态
+                    if (this.systemStatus.is_scanning || this.uiState.showProgress) {
+                        await this.loadScanStatus();
+                    }
+
+                    // 处理病毒库更新状态
+                    if (this.updateStatus.is_updating) {
+                        const updateData = await this.apiRequest('update/status');
+                        this.updateStatus.is_updating = updateData.is_updating || false;
+                        if (!this.updateStatus.is_updating) {
+                            await this.loadVirusVersion();
+                            await this.loadUpdateHistory();
+                        }
+                    }
+                } catch (error) {
+                    // 轮询中的错误不显示通知，避免刷屏
+                    console.error('Polling error:', error);
                 }
             }, 2000);
         },

@@ -17,30 +17,47 @@
                         <img src="./images/icon.png" alt="ClamAV" class="logo" onerror="this.style.display='none'">
                         <h1>ClamAV 杀毒软件</h1>
                     </div>
-                    <div class="status-badge" :class="{ active: systemStatus.is_scanning }">
+                    <div class="status-badge" :class="{ active: systemStatus.is_scanning, disconnected: !isReady }">
                         <span class="status-dot"></span>
-                        {{ systemStatus.is_scanning ? '扫描中' : '就绪' }}
+                        <template v-if="!isReady">
+                            {{ connectionStatus.checking ? '连接中...' : '未连接' }}
+                        </template>
+                        <template v-else>
+                            {{ systemStatus.is_scanning ? '扫描中' : '就绪' }}
+                        </template>
                     </div>
                 </div>
             </header>
 
+            <!-- 连接中遮罩 -->
+            <div v-if="!isReady" class="connecting-overlay">
+                <div class="connecting-content">
+                    <div class="connecting-spinner"></div>
+                    <p>{{ connectionStatus.checking ? '正在连接服务...' : '服务未就绪' }}</p>
+                    <p class="connecting-hint" v-if="connectionStatus.retryCount > 0">
+                        重试次数: {{ connectionStatus.retryCount }}
+                    </p>
+                    <p class="connecting-hint">请稍候，服务启动中...</p>
+                </div>
+            </div>
+
             <!-- 主要内容区域 -->
-            <main class="main-content">
+            <main class="main-content" :class="{ 'disabled-content': !isReady }">
                 <!-- 快速操作区 -->
                 <section class="quick-actions">
-                    <button class="action-btn primary" @click="startFullScan" :disabled="systemStatus.is_scanning">
+                    <button class="action-btn primary" @click="startFullScan" :disabled="systemStatus.is_scanning || !isReady">
                         <span class="btn-icon">🔍</span>
                         <span>{{ systemStatus.is_scanning ? '扫描进行中...' : '全盘扫描' }}</span>
                     </button>
-                    <button class="action-btn secondary" @click="startCustomScan" :disabled="systemStatus.is_scanning">
+                    <button class="action-btn secondary" @click="startCustomScan" :disabled="systemStatus.is_scanning || !isReady">
                         <span class="btn-icon">📁</span>
                         <span>自定义扫描</span>
                     </button>
-                    <button class="action-btn secondary" @click="stopScan" :disabled="!systemStatus.is_scanning">
+                    <button class="action-btn secondary" @click="stopScan" :disabled="!systemStatus.is_scanning || !isReady">
                         <span class="btn-icon">⏹</span>
                         <span>停止扫描</span>
                     </button>
-                    <button class="action-btn secondary" @click="startUpdate" :disabled="updateStatus.is_updating">
+                    <button class="action-btn secondary" @click="startUpdate" :disabled="updateStatus.is_updating || !isReady">
                         <span class="btn-icon">🔄</span>
                         <span>{{ updateStatus.is_updating ? '更新中...' : '更新病毒库' }}</span>
                     </button>
@@ -264,7 +281,7 @@
                                     <option value="ignore">仅记录</option>
                                 </select>
                             </div>
-                            <button class="action-btn primary" @click="saveConfig">保存设置</button>
+                            <button class="action-btn primary" @click="saveConfig" :disabled="!isReady">保存设置</button>
                         </div>
                     </div>
                 </section>
