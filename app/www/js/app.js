@@ -375,8 +375,8 @@ createApp({
                     this.showNotification('全盘扫描已启动', 'success');
                     this.scanStatus.scan_id = result.scan_id;
                     this.scanStatus.status = 'scanning';
+                    this.systemStatus.is_scanning = true;
                     this.uiState.showProgress = true;  // 立即显示进度条
-                    await this.loadSystemStatus();
                     await this.loadScanHistory();
                 } else {
                     this.showNotification(result.error || '启动扫描失败', 'error');
@@ -412,8 +412,8 @@ createApp({
                     this.showNotification('自定义扫描已启动', 'success');
                     this.scanStatus.scan_id = result.scan_id;
                     this.scanStatus.status = 'scanning';
+                    this.systemStatus.is_scanning = true;
                     this.uiState.showProgress = true;  // 立即显示进度条
-                    await this.loadSystemStatus();
                     await this.loadScanHistory();
                 } else {
                     this.showNotification(result.error || '启动扫描失败', 'error');
@@ -432,7 +432,7 @@ createApp({
 
                 if (result.success) {
                     this.showNotification('扫描已停止', 'info');
-                    await this.loadSystemStatus();
+                    this.systemStatus.is_scanning = false;
                     await this.loadScanHistory();
                 } else {
                     this.showNotification(result.error || '停止扫描失败', 'error');
