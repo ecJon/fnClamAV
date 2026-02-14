@@ -113,17 +113,47 @@ jobs:
           cd app/share/clamav
           # 清理旧的病毒库文件（如果有）
           rm -f *.cvd *.cld 2>/dev/null || true
-          # Download main.cvd
+
+          # Download main.cvd (~85MB)
           echo "Downloading main.cvd..."
-          curl -L -O https://database.clamav.net/main.cvd
-          # Download daily.cvd
+          curl -L --fail --retry 3 --retry-delay 5 \
+            -A "ClamAV/1.5.1" \
+            -o main.cvd \
+            https://database.clamav.net/main.cvd
+
+          # Download daily.cvd (~23MB)
           echo "Downloading daily.cvd..."
-          curl -L -O https://database.clamav.net/daily.cvd
-          # Download bytecode.cvd
+          curl -L --fail --retry 3 --retry-delay 5 \
+            -A "ClamAV/1.5.1" \
+            -o daily.cvd \
+            https://database.clamav.net/daily.cvd
+
+          # Download bytecode.cvd (~276KB)
           echo "Downloading bytecode.cvd..."
-          curl -L -O https://database.clamav.net/bytecode.cvd
+          curl -L --fail --retry 3 --retry-delay 5 \
+            -A "ClamAV/1.5.1" \
+            -o bytecode.cvd \
+            https://database.clamav.net/bytecode.cvd
+
           echo "Virus database files:"
           ls -lh
+
+          # 验证文件大小
+          echo ""
+          echo "Verifying file sizes..."
+          MAIN_SIZE=$(stat -c%s main.cvd 2>/dev/null || stat -f%z main.cvd)
+          DAILY_SIZE=$(stat -c%s daily.cvd 2>/dev/null || stat -f%z daily.cvd)
+          BYTECODE_SIZE=$(stat -c%s bytecode.cvd 2>/dev/null || stat -f%z bytecode.cvd)
+
+          if [ "$MAIN_SIZE" -lt 10000000 ]; then
+            echo "ERROR: main.cvd is too small ($MAIN_SIZE bytes), expected ~85MB"
+            exit 1
+          fi
+          if [ "$DAILY_SIZE" -lt 1000000 ]; then
+            echo "ERROR: daily.cvd is too small ($DAILY_SIZE bytes), expected ~23MB"
+            exit 1
+          fi
+          echo "✅ Virus database files verified successfully"
 
       - name: Build Rust daemon
         run: |
