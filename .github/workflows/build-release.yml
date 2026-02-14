@@ -1,0 +1,200 @@
+name: Build and Release FPK
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag version to build (e.g., 1.3.1)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          # Remove 'v' prefix if present
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libssl-dev \
+            libcurl4-openssl-dev \
+            libjson-c-dev \
+            libbz2-dev \
+            liblzma-dev \
+            libzstd-dev \
+            libpcre2-dev \
+            ninja-build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust-server/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache ClamAV build
+        id: cache-clamav
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/lib
+            app/bin
+            app/include
+          key: ${{ runner.os }}-clamav-${{ hashFiles('clamAV/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-clamav-
+
+      - name: Build ClamAV
+        if: steps.cache-clamav.outputs.cache-hit != 'true'
+        run: |
+          echo "Building ClamAV shared library..."
+          mkdir -p clamAV/build
+          cd clamAV/build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/app \
+            -DBUILD_SHARED_LIBS=ON \
+            -DENABLE_STATIC_LIB=OFF \
+            -DDISABLE_MILTER=ON \
+            -DDISABLE_CLAMSCAN=ON \
+            -DDISABLE_CLAMD=ON \
+            -DDISABLE_FRESHCLAM=OFF \
+            -DDISABLE_CLAMONACC=ON \
+            -DDISABLE_CLAMAV_SUBMIT=ON \
+            -DDISABLE_UNRAR=ON \
+            -GNinja
+          ninja
+          ninja install
+
+      - name: Download virus database
+        run: |
+          mkdir -p app/share/clamav
+          cd app/share/clamav
+          # Download main.cvd
+          curl -L -O https://database.clamav.net/main.cvd
+          # Download daily.cvd
+          curl -L -O https://database.clamav.net/daily.cvd
+          # Download bytecode.cvd
+          curl -L -O https://database.clamav.net/bytecode.cvd
+          ls -lh
+
+      - name: Build Rust daemon
+        run: |
+          cd rust-server
+          cargo build --release
+          mkdir -p ../app/server
+          cp target/release/clamav-daemon ../app/server/
+          chmod +x ../app/server/clamav-daemon
+
+      - name: Package FPK
+        run: |
+          chmod +x build.sh
+          ./build.sh --skip-clamav
+
+          # Rename FPK with version
+          VERSION="${{ steps.version.outputs.version }}"
+          mv dist/fnnas.clamav.fpk dist/fnnas.clamav-${VERSION}.fpk
+
+          echo "fpk_path=dist/fnnas.clamav-${VERSION}.fpk" >> $GITHUB_OUTPUT
+          echo "fpk_name=fnnas.clamav-${VERSION}.fpk" >> $GITHUB_OUTPUT
+
+          ls -lh dist/
+
+      - name: Upload FPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fnnas.clamav-${{ steps.version.outputs.version }}.fpk
+          path: dist/fnnas.clamav-${{ steps.version.outputs.version }}.fpk
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download FPK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: fnnas.clamav-${{ steps.version.outputs.version }}.fpk
+          path: ./dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ClamAV飞牛版 ${{ steps.version.outputs.version }}
+          body: |
+            ## ClamAV飞牛版 ${{ steps.version.outputs.version }}
+
+            基于 ClamAV 的病毒扫描和防护软件
+
+            ### 功能特性
+            - 全盘扫描 / 自定义扫描
+            - 病毒库更新
+            - 文件隔离
+            - 扫描历史记录
+            - 批量威胁处理
+
+            ### 安装方法
+            1. 下载 `fnnas.clamav-${{ steps.version.outputs.version }}.fpk`
+            2. 在飞牛OS应用商店中选择手动安装
+            3. 上传FPK文件完成安装
+
+            ---
+
+            **完整更新日志请查看 [commits](https://github.com/${{ github.repository }}/commits/${{ steps.version.outputs.version }})**
+          files: |
+            dist/fnnas.clamav-${{ steps.version.outputs.version }}.fpk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
