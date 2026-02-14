@@ -18,6 +18,12 @@
                 "permission": {
                     "rw": ["fnnas.clamav"]
                 }
+            },
+            {
+                "name": "scan_root",
+                "permission": {
+                    "ro": ["fnnas.clamav"]
+                }
             }
         ]
     }
