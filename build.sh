@@ -230,7 +230,10 @@ cp "${PROJECT_DIR}/ICON_256.PNG" "${BUILD_TEMP}/"
 echo "📂 Copying directories..."
 cp -r "${PROJECT_DIR}/cmd" "${BUILD_TEMP}/"
 cp -r "${PROJECT_DIR}/config" "${BUILD_TEMP}/"
-cp -r "${PROJECT_DIR}/wizard" "${BUILD_TEMP}/"
+# wizard 目录可选（如果存在且非空）
+if [ -d "${PROJECT_DIR}/wizard" ] && [ "$(ls -A ${PROJECT_DIR}/wizard 2>/dev/null)" ]; then
+    cp -r "${PROJECT_DIR}/wizard" "${BUILD_TEMP}/"
+fi
 
 # 创建 app.tgz
 echo "📦 Creating app.tgz..."
