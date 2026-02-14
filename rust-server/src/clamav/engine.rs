@@ -638,8 +638,13 @@ impl ScanEngine {
     ) -> Result<ScanOutcome> {
         tracing::info!("Starting directory scan: {}", path.display());
 
-        // 收集所有文件
-        let files = Self::collect_files(path)?;
+        // 检查取消标志
+        if *cancel_flag.lock().await {
+            return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
+        }
+
+        // 收集所有文件（带取消检查）
+        let files = Self::collect_files_with_cancel(path, cancel_flag.clone()).await?;
         let total = files.len() as u32;
         tracing::info!("Found {} files to scan", total);
 
@@ -723,31 +728,76 @@ impl ScanEngine {
     }
 
     /// 收集目录中的所有文件
-    fn collect_files(path: &Path) -> Result<Vec<PathBuf>> {
+    /// 收集目录中的所有文件（带取消检查）
+    async fn collect_files_with_cancel(
+        path: &Path,
+        cancel_flag: Arc<AsyncMutex<bool>>,
+    ) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
+        let mut check_counter = 0u32;
 
-        fn visit(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-            let entries = std::fs::read_dir(dir)
-                .map_err(|e| anyhow::anyhow!("Failed to read directory {}: {}", dir.display(), e))?;
+        fn visit(
+            dir: &Path,
+            files: &mut Vec<PathBuf>,
+            cancel_flag: &Arc<AsyncMutex<bool>>,
+            check_counter: &mut u32,
+        ) -> Result<bool> {
+            let entries = match std::fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!("Failed to read directory {}: {}", dir.display(), e);
+                    return Ok(true); // 继续而不是失败
+                }
+            };
 
             for entry in entries {
-                let entry = entry.map_err(|e| anyhow::anyhow!("Failed to read entry: {}", e))?;
+                // 每 100 个文件检查一次取消标志
+                *check_counter += 1;
+                if *check_counter % 100 == 0 {
+                    // 使用 try_lock 避免阻塞
+                    if let Ok(flag) = cancel_flag.try_lock() {
+                        if *flag {
+                            tracing::info!("File collection cancelled");
+                            return Ok(false); // 被取消
+                        }
+                    }
+                }
+
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        tracing::warn!("Failed to read entry: {}", e);
+                        continue;
+                    }
+                };
                 let path = entry.path();
 
                 if path.is_dir() {
                     // 递归访问子目录
-                    if let Err(e) = visit(&path, files) {
+                    if let Err(e) = visit(&path, files, cancel_flag, check_counter) {
                         tracing::warn!("Failed to visit directory {}: {}", path.display(), e);
+                    }
+                    // 检查是否被取消
+                    if let Ok(flag) = cancel_flag.try_lock() {
+                        if *flag {
+                            return Ok(false);
+                        }
                     }
                 } else if path.is_file() {
                     files.push(path);
                 }
             }
-            Ok(())
+            Ok(true)
         }
 
-        visit(path, &mut files)?;
-        tracing::debug!("Collected {} files from {}", files.len(), path.display());
+        let completed = visit(path, &mut files, &cancel_flag, &mut check_counter)?;
+
+        if !completed {
+            tracing::info!("File collection was cancelled, collected {} files so far", files.len());
+            return Err(anyhow::anyhow!("Scan cancelled during file collection"));
+        }
+
+        tracing::info!("Collected {} files from {}", files.len(), path.display());
         Ok(files)
     }
 
