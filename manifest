@@ -1,5 +1,5 @@
 appname               = fnnas.clamav
-version               = 1.3.0
+version               = 1.3.1
 display_name          = ClamAV飞牛版
 desc                  = 基于 ClamAV 的病毒扫描和防护软件，支持全盘扫描、自定义扫描、病毒库更新和文件隔离功能
 platform              = x86
