@@ -76,7 +76,7 @@ jobs:
             app/lib
             app/bin
             app/include
-          key: ${{ runner.os }}-clamav-1.5.1
+          key: ${{ runner.os }}-clamav-1.5.1-v2
           restore-keys: |
             ${{ runner.os }}-clamav-
 
@@ -102,7 +102,7 @@ jobs:
             -DENABLE_EXAMPLES=OFF \
             -DENABLE_MILTER=OFF \
             -DENABLE_CLAMONACC=OFF \
-            -DENABLE_UNRAR=OFF \
+            -DENABLE_UNRAR=ON \
             -GNinja
           ninja
           ninja install
