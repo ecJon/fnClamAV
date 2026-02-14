@@ -150,11 +150,16 @@
                         <div v-else class="threats-list">
                             <div v-for="threat in threats" :key="threat.id" class="threat-item">
                                 <div class="threat-info">
-                                    <h4>{{ threat.virus_name }}</h4>
+                                    <h4>
+                                        {{ threat.virus_name }}
+                                        <span v-if="threat.action_taken" :class="['status-badge', threat.action_taken]">
+                                            {{ threat.action_taken === 'ignored' ? '已忽略' : threat.action_taken === 'quarantined' ? '已隔离' : threat.action_taken === 'deleted' ? '已删除' : threat.action_taken }}
+                                        </span>
+                                    </h4>
                                     <p>{{ threat.file_path }}</p>
                                     <small>{{ new Date(threat.detected_time * 1000).toLocaleString() }}</small>
                                 </div>
-                                <div class="threat-actions">
+                                <div class="threat-actions" v-if="!threat.action_taken">
                                     <button class="btn-small danger" @click="handleThreat(threat.id, 'quarantine')">
                                         隔离
                                     </button>

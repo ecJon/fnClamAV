@@ -14,6 +14,8 @@ pub struct ThreatItem {
     pub scan_id: String,
     pub file_path: String,
     pub virus_name: String,
+    /// 检测时间（使用 action_time 或当前时间）
+    pub detected_time: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action_taken: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -424,6 +424,21 @@ body {
     color: #991b1b;
 }
 
+.status-badge.ignored {
+    background: #e5e7eb;
+    color: #6b7280;
+}
+
+.status-badge.quarantined {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.status-badge.deleted {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
 /* ==================== Quarantine Header ==================== */
 .quarantine-header {
     margin-bottom: 16px;

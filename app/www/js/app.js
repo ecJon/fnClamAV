@@ -262,6 +262,7 @@ createApp({
                         this.scanStatus.status = 'idle';
                         this.scanStatus.progress = null;
                         this.loadScanHistory(); // 刷新历史记录
+                        this.loadThreats(); // 刷新威胁列表
                     }, 5000);
                 }
             } catch (error) {
@@ -304,7 +305,7 @@ createApp({
         async loadThreats() {
             try {
                 const data = await this.apiRequest('threats');
-                this.threats = data.threats || [];
+                this.threats = data.items || [];
             } catch (error) {
                 console.error('Failed to load threats:', error);
                 this.threats = [];

@@ -389,6 +389,8 @@ impl Database {
     pub fn get_threats(&self, scan_id: Option<&str>, limit: i32) -> SqliteResult<Vec<ThreatRecord>> {
         let conn = self.get_conn()?;
 
+        // 返回所有威胁记录（完整历史）
+        // action_taken 用于前端显示处理状态：null=待处理，ignored=已忽略，quarantined=已隔离，deleted=已删除
         let sql = if scan_id.is_some() {
             "SELECT id, scan_id, file_path, virus_name, action_taken, action_time, original_location, file_hash
              FROM threat_records WHERE scan_id = ?1 ORDER BY id DESC LIMIT ?2"

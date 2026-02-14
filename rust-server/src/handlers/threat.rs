@@ -8,14 +8,19 @@ pub async fn list_threats(
 ) -> Json<ThreatsListResponse> {
     match state.db.get_threats(None, 100) {
         Ok(threats) => {
-            let items: Vec<ThreatItem> = threats.into_iter().map(|t| ThreatItem {
-                id: t.id,
-                scan_id: t.scan_id,
-                file_path: t.file_path,
-                virus_name: t.virus_name,
-                action_taken: t.action_taken,
-                quarantine_uuid: t.original_location,
-                action_time: t.action_time,
+            let items: Vec<ThreatItem> = threats.into_iter().map(|t| {
+                // 使用 action_time 作为 detected_time，如果没有则使用当前时间
+                let detected_time = t.action_time.unwrap_or_else(|| chrono::Utc::now().timestamp());
+                ThreatItem {
+                    id: t.id,
+                    scan_id: t.scan_id,
+                    file_path: t.file_path,
+                    virus_name: t.virus_name,
+                    detected_time,
+                    action_taken: t.action_taken,
+                    quarantine_uuid: t.original_location,
+                    action_time: t.action_time,
+                }
             }).collect();
 
             Json(ThreatsListResponse {
@@ -68,6 +73,7 @@ pub async fn handle_threat(
                 Ok(uuid) => {
                     // 更新威胁记录
                     let _ = state.db.update_threat_action(id, "quarantined", Some(&uuid));
+                    let now = chrono::Utc::now().timestamp();
 
                     Json(ThreatHandleResponse {
                         success: true,
@@ -76,9 +82,10 @@ pub async fn handle_threat(
                             scan_id: threat.scan_id,
                             file_path: threat.file_path.clone(),
                             virus_name: threat.virus_name,
+                            detected_time: threat.action_time.unwrap_or(now),
                             action_taken: Some("quarantined".to_string()),
                             quarantine_uuid: Some(uuid),
-                            action_time: Some(chrono::Utc::now().timestamp()),
+                            action_time: Some(now),
                         }),
                         error: None,
                     })
@@ -96,6 +103,7 @@ pub async fn handle_threat(
                 Ok(()) => {
                     // 更新威胁记录
                     let _ = state.db.update_threat_action(id, "deleted", None);
+                    let now = chrono::Utc::now().timestamp();
 
                     Json(ThreatHandleResponse {
                         success: true,
@@ -104,9 +112,10 @@ pub async fn handle_threat(
                             scan_id: threat.scan_id,
                             file_path: threat.file_path.clone(),
                             virus_name: threat.virus_name,
+                            detected_time: threat.action_time.unwrap_or(now),
                             action_taken: Some("deleted".to_string()),
                             quarantine_uuid: None,
-                            action_time: Some(chrono::Utc::now().timestamp()),
+                            action_time: Some(now),
                         }),
                         error: None,
                     })
@@ -121,6 +130,7 @@ pub async fn handle_threat(
         "ignore" => {
             // 忽略威胁
             let _ = state.db.update_threat_action(id, "ignored", None);
+            let now = chrono::Utc::now().timestamp();
 
             Json(ThreatHandleResponse {
                 success: true,
@@ -129,9 +139,10 @@ pub async fn handle_threat(
                     scan_id: threat.scan_id,
                     file_path: threat.file_path.clone(),
                     virus_name: threat.virus_name,
+                    detected_time: threat.action_time.unwrap_or(now),
                     action_taken: Some("ignored".to_string()),
                     quarantine_uuid: None,
-                    action_time: Some(chrono::Utc::now().timestamp()),
+                    action_time: Some(now),
                 }),
                 error: None,
             })

@@ -149,6 +149,15 @@ impl ScanService {
                         "扫描完成，发现威胁"
                     };
                     tracing::info!("Scan {} completed: total={}, threats={}", scan_id, total, threats_count);
+
+                    // 保存威胁记录到数据库
+                    for (file_path, virus_name) in &outcome.threats {
+                        tracing::info!("Saving threat: {} -> {}", file_path.0, virus_name.0);
+                        if let Err(e) = db.add_threat(&scan_id, &file_path.0, &virus_name.0) {
+                            tracing::error!("Failed to save threat {}: {}", file_path.0, e);
+                        }
+                    }
+
                     let _ = db.finish_scan(&scan_id, "completed", total, threats_count, Some(error_msg));
                 }
                 Err(e) => {
