@@ -133,6 +133,24 @@ jobs:
           cp target/release/clamav-daemon ../app/server/
           chmod +x ../app/server/clamav-daemon
 
+      - name: Verify app directory before packaging
+        run: |
+          echo "=== App directory structure ==="
+          echo "Total size:"
+          du -sh app/
+          echo ""
+          echo "Subdirectories:"
+          du -sh app/*/
+          echo ""
+          echo "=== Virus database files ==="
+          ls -lh app/share/clamav/
+          echo ""
+          echo "=== ClamAV libraries ==="
+          ls -lh app/lib/
+          echo ""
+          echo "=== ClamAV binaries ==="
+          ls -lh app/bin/
+
       - name: Package FPK
         run: |
           chmod +x build.sh
