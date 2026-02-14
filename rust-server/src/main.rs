@@ -77,6 +77,13 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Scan engine started successfully");
     }
 
+    // 初始化扫描服务回调（只设置一次，避免覆盖）
+    {
+        let scan_service = app_state.scan_service.read().await;
+        scan_service.initialize_callbacks().await;
+        tracing::info!("Scan service callbacks initialized");
+    }
+
     // 构建路由
     let app = Router::new()
         // 健康检查

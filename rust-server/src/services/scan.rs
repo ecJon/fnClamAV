@@ -48,6 +48,114 @@ impl ScanService {
         }
     }
 
+    /// 初始化回调（只调用一次）
+    pub async fn initialize_callbacks(&self) {
+        let db = self.db.clone();
+        let active_scans = self.active_scans.clone();
+        let active_scans_for_progress = self.active_scans.clone();
+        let db_for_progress = self.db.clone();
+
+        // 设置进度回调（只设置一次）
+        self.clamav.set_progress_callback(move |progress| {
+            let active_scans = active_scans_for_progress.clone();
+            let db = db_for_progress.clone();
+            let scanned = progress.scanned_files.0;
+            let total = progress.total_files.0;
+            let current_file = progress.current_file.as_ref().map(|f| f.0.clone());
+            let threats = progress.threats_found.0;
+
+            // 使用 block_in_place 在同步回调中执行异步操作
+            let scan_id = tokio::task::block_in_place(|| {
+                let scans = active_scans.try_read();
+                if let Ok(scans) = scans {
+                    scans.iter()
+                        .find(|(_, s)| s.status == "scanning")
+                        .map(|(id, _)| id.clone())
+                } else {
+                    None
+                }
+            });
+
+            let Some(scan_id) = scan_id else {
+                return;
+            };
+
+            // 更新内存中的实时状态
+            tokio::task::block_in_place(|| {
+                let _ = tokio::runtime::Handle::current().block_on(async {
+                    let mut scans = active_scans.write().await;
+                    if let Some(s) = scans.get_mut(&scan_id) {
+                        s.scanned_files = scanned;
+                        s.total_files = total;
+                        s.current_file = current_file.clone();
+                        s.threats_found = threats;
+                    }
+                });
+            });
+
+            // 只有未完成时才更新数据库
+            if scanned < total {
+                tokio::spawn(async move {
+                    let _ = db.update_scan_progress(
+                        &scan_id,
+                        scanned as i32,
+                        total as i32,
+                        current_file.as_deref(),
+                    );
+                });
+            }
+        }).await;
+
+        // 设置完成回调（只设置一次）
+        self.clamav.set_completion_callback(move |task_id, result| {
+            let db = db.clone();
+            let active_scans = active_scans.clone();
+
+            // 根据 task_id 查找对应的 scan_id
+            let scan_id = tokio::task::block_in_place(|| {
+                let scans = active_scans.try_read();
+                if let Ok(scans) = scans {
+                    scans.iter()
+                        .find(|(_, s)| s.task_id == task_id)
+                        .map(|(id, _)| id.clone())
+                } else {
+                    None
+                }
+            });
+
+            let scan_id = match scan_id {
+                Some(id) => id,
+                None => {
+                    tracing::warn!("Cannot find scan_id for task_id={}, may have been stopped", task_id);
+                    return;
+                }
+            };
+
+            match result {
+                Ok(outcome) => {
+                    let total = outcome.total_files as i32;
+                    let threats_count = outcome.threats.len();
+                    let error_msg = if threats_count == 0 {
+                        "扫描完成，未发现威胁"
+                    } else {
+                        "扫描完成，发现威胁"
+                    };
+                    let _ = db.finish_scan(&scan_id, "completed", total, Some(error_msg));
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    let _ = db.finish_scan(&scan_id, "failed", 0, Some(error_msg.as_str()));
+                }
+            }
+
+            // 从 active_scans 移除
+            tokio::spawn(async move {
+                let mut scans = active_scans.write().await;
+                scans.remove(&scan_id);
+            });
+        }).await;
+    }
+
     /// 开始扫描
     pub async fn start_scan(
         &self,
@@ -75,9 +183,6 @@ impl ScanService {
         let target = targets.into_iter().next().unwrap();
         tracing::info!("Scan target: {:?}", target);
 
-        // 注意：数据库记录由 handler 层负责创建，这里不需要重复创建
-        // handlers/scan.rs 已经在调用 start_scan 之前创建了记录并传入了正确的 scan_type
-
         // 记录活跃扫描
         let active_scan = ActiveScan {
             scan_id: scan_id.clone(),
@@ -95,118 +200,7 @@ impl ScanService {
         scans.insert(scan_id.clone(), active_scan);
         drop(scans);
 
-        // 设置进度回调（在提交任务之前）
-        let db = self.db.clone();
-        let active_scans_for_progress = self.active_scans.clone();
-        let scan_id_for_callback = scan_id.clone();
-        self.clamav.set_progress_callback(move |progress| {
-            let db = db.clone();
-            let active_scans = active_scans_for_progress.clone();
-            let scan_id = scan_id_for_callback.clone();
-            let scanned = progress.scanned_files.0;
-            let total = progress.total_files.0;
-            let percent = progress.percent.0;
-            let current_file = progress.current_file.as_ref().map(|f| f.0.clone());
-            let threats = progress.threats_found.0;
-            tracing::debug!("Progress update: scan_id={}, scanned={}/{}, percent={}, current_file={:?}, threats={}",
-                          scan_id, scanned, total, percent, current_file, threats);
-
-            // 同步更新内存中的实时状态（确保前端获取最新数据）
-            let scans = active_scans.try_read();
-            if let Ok(scans) = scans {
-                if let Some(scan) = scans.get(&scan_id) {
-                    // 注意：这里使用 block_in_place 在同步上下文中获取写锁
-                    let _ = tokio::task::block_in_place(|| {
-                        let mut scans_w = active_scans.try_write();
-                        if let Ok(mut scans) = scans_w {
-                            if let Some(s) = scans.get_mut(&scan_id) {
-                                s.scanned_files = scanned;
-                                s.total_files = total;
-                                s.current_file = current_file.clone();
-                                s.threats_found = threats;
-                            }
-                        }
-                    });
-                }
-            }
-
-            // 只有未完成时才更新数据库进度（避免覆盖完成状态）
-            // 当 scanned >= total 时，说明扫描已完成，不需要再更新进度
-            if scanned < total {
-                tokio::spawn(async move {
-                    let _ = db.update_scan_progress(
-                        &scan_id,
-                        scanned as i32,
-                        total as i32,
-                        current_file.as_deref(),
-                    );
-                });
-            } else {
-                tracing::debug!("Skipping progress update for scan_id={}, scan already completed ({} >= {})", scan_id, scanned, total);
-            }
-        }).await;
-
-        // 设置完成回调（接收 task_id，根据 task_id 查找对应的 scan_id）
-        let db_clone = self.db.clone();
-        let active_scans_clone = self.active_scans.clone();
-        self.clamav.set_completion_callback(move |task_id, result| {
-            let db = db_clone.clone();
-            let active_scans = active_scans_clone.clone();
-
-            // 根据 task_id 查找对应的 scan_id（使用 block_in_place 在同步上下文中执行异步操作）
-            let scan_id = tokio::task::block_in_place(|| {
-                let scans = active_scans.try_read();
-                if let Ok(scans) = scans {
-                    scans.iter()
-                        .find(|(_, s)| s.task_id == task_id)
-                        .map(|(id, _)| id.clone())
-                } else {
-                    None
-                }
-            });
-
-            let scan_id = match scan_id {
-                Some(id) => id,
-                None => {
-                    tracing::error!("Cannot find scan_id for task_id={}, skipping completion callback", task_id);
-                    return;
-                }
-            };
-
-            match result {
-                Ok(outcome) => {
-                    tracing::info!("Scan completed successfully: scan_id={}, task_id={}, total={}, scanned={}, threats={}",
-                                  scan_id, task_id, outcome.total_files, outcome.scanned_files, outcome.threats.len());
-
-                    // 同步更新数据库，确保完成状态最后写入（避免与异步进度更新产生竞态条件）
-                    let total = outcome.total_files as i32;
-                    let threats_count = outcome.threats.len();
-                    let status = "completed";
-                    let error_msg = if threats_count == 0 {
-                        "扫描完成，未发现威胁"
-                    } else {
-                        "扫描完成，发现威胁"
-                    };
-
-                    // 直接同步调用，不使用 tokio::spawn
-                    let _ = db.finish_scan(&scan_id, status, total, Some(error_msg));
-                }
-                Err(e) => {
-                    tracing::error!("Scan failed: scan_id={}, task_id={}, error={:?}", scan_id, task_id, e);
-                    // 扫描失败时也要更新数据库
-                    let error_msg = e.to_string();
-                    // 直接同步调用，不使用 tokio::spawn
-                    let _ = db.finish_scan(&scan_id, "failed", 0, Some(error_msg.as_str()));
-                }
-            }
-
-            // 从 active_scans 移除完成的扫描
-            tokio::spawn(async move {
-                let mut scans = active_scans.write().await;
-                scans.remove(&scan_id);
-                tracing::debug!("Removed scan {} from active_scans after completion", scan_id);
-            });
-        }).await;
+        // 注意：回调已在 initialize_callbacks 中设置，这里不需要再设置
 
         // 提交扫描任务
         tracing::info!("Submitting scan task to engine...");
