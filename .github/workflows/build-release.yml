@@ -98,6 +98,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/app \
             -DBUILD_SHARED_LIBS=ON \
             -DENABLE_STATIC_LIB=OFF \
+            -DENABLE_TESTS=OFF \
+            -DENABLE_EXAMPLES=OFF \
             -DDISABLE_MILTER=ON \
             -DDISABLE_CLAMSCAN=ON \
             -DDISABLE_CLAMD=ON \
