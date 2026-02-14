@@ -7,7 +7,6 @@ node_modules/
 
 # Rust build artifacts
 rust-server/target/
-rust-cgi/target/
 **/*.rs.bk
 Cargo.lock
 
