@@ -444,6 +444,46 @@ body {
     margin-bottom: 16px;
 }
 
+/* ==================== Threats Header ==================== */
+.threats-header {
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.select-all {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #374151;
+    cursor: pointer;
+}
+
+.select-all input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.batch-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.threat-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.threat-item {
+    display: flex;
+    align-items: center;
+}
+
 /* ==================== Settings Form ==================== */
 .settings-form {
     max-width: 600px;

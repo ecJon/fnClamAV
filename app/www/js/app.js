@@ -58,6 +58,9 @@ createApp({
             // 威胁列表
             threats: [],
 
+            // 选中的威胁ID
+            selectedThreats: [],
+
             // 隔离区列表
             quarantineList: [],
 
@@ -96,6 +99,22 @@ createApp({
         // 界面是否可用（取决于连接状态）
         isReady() {
             return this.connectionStatus.connected;
+        },
+
+        // 待处理的威胁（未处理的）
+        pendingThreats() {
+            return this.threats.filter(t => !t.action_taken);
+        },
+
+        // 全选状态
+        selectAllThreats: {
+            get() {
+                return this.pendingThreats.length > 0 &&
+                       this.selectedThreats.length === this.pendingThreats.length;
+            },
+            set(value) {
+                // 由 toggleSelectAllThreats 方法处理
+            }
         }
     },
 
@@ -306,6 +325,7 @@ createApp({
             try {
                 const data = await this.apiRequest('threats');
                 this.threats = data.items || [];
+                this.selectedThreats = []; // 清空选中状态
             } catch (error) {
                 console.error('Failed to load threats:', error);
                 this.threats = [];
@@ -518,6 +538,56 @@ createApp({
                 }
             } catch (error) {
                 this.showNotification('处理威胁失败: ' + error.message, 'error');
+            }
+        },
+
+        // 全选/取消全选威胁
+        toggleSelectAllThreats() {
+            if (this.selectedThreats.length === this.pendingThreats.length) {
+                this.selectedThreats = [];
+            } else {
+                this.selectedThreats = this.pendingThreats.map(t => t.id);
+            }
+        },
+
+        // 批量处理威胁
+        async batchHandleThreats(action) {
+            if (this.selectedThreats.length === 0) {
+                this.showNotification('请先选择要处理的威胁', 'warning');
+                return;
+            }
+
+            const actionText = action === 'quarantine' ? '隔离' : '忽略';
+            if (!confirm(`确定要${actionText}选中的 ${this.selectedThreats.length} 个威胁吗？`)) {
+                return;
+            }
+
+            let successCount = 0;
+            let failCount = 0;
+
+            for (const threatId of this.selectedThreats) {
+                try {
+                    const result = await this.apiRequest(`threats/${threatId}/handle`, {
+                        method: 'POST',
+                        body: JSON.stringify({ action })
+                    });
+                    if (result.success) {
+                        successCount++;
+                    } else {
+                        failCount++;
+                    }
+                } catch (error) {
+                    failCount++;
+                }
+            }
+
+            this.selectedThreats = [];
+            await this.loadThreats();
+
+            if (failCount === 0) {
+                this.showNotification(`已${actionText} ${successCount} 个威胁`, 'success');
+            } else {
+                this.showNotification(`${actionText}完成：成功 ${successCount}，失败 ${failCount}`, 'warning');
             }
         },
 
