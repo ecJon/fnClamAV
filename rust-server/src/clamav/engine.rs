@@ -393,8 +393,24 @@ impl ScanEngine {
 
                 EngineCommand::CancelTask { task_id, reply } => {
                     let mut queue = task_queue.lock().await;
+                    let current = queue.current();
+
+                    // 检查是否是当前正在运行的任务
+                    let is_current = match current {
+                        Some(task) if task.id == task_id => true,
+                        _ => false,
+                    };
+
+                    if is_current {
+                        // 设置取消标志来停止正在运行的扫描
+                        let mut flag = cancel_flag.lock().await;
+                        *flag = true;
+                        tracing::info!("Set cancel flag for running task: {}", task_id);
+                    }
+
+                    // 从队列中取消任务
                     let result = queue.cancel(&task_id);
-                    let _ = reply.send(Ok(result));
+                    let _ = reply.send(Ok(result || is_current));
                 }
 
                 EngineCommand::PauseTask { task_id, reply } => {

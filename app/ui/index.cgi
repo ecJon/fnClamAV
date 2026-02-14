@@ -60,15 +60,15 @@ forward_request() {
     # 构建完整 URL
     local url="${DAEMON_URL}/api/${endpoint}"
 
-    # 转发请求
+    # 转发请求（设置 30 秒超时，连接超时 5 秒）
     local response
     if [[ -n "$request_body" ]]; then
-        response=$(curl -s -X "$method" \
+        response=$(curl -s -m 30 --connect-timeout 5 -X "$method" \
             -H "Content-Type: application/json" \
             -d "$request_body" \
             "$url" 2>/dev/null)
     else
-        response=$(curl -s -X "$method" "$url" 2>/dev/null)
+        response=$(curl -s -m 30 --connect-timeout 5 -X "$method" "$url" 2>/dev/null)
     fi
 
     # 输出响应
