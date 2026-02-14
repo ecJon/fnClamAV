@@ -76,9 +76,16 @@ jobs:
             app/lib
             app/bin
             app/include
-          key: ${{ runner.os }}-clamav-${{ hashFiles('clamAV/CMakeLists.txt') }}
+          key: ${{ runner.os }}-clamav-1.5.1
           restore-keys: |
             ${{ runner.os }}-clamav-
+
+      - name: Clone ClamAV source
+        if: steps.cache-clamav.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/Cisco-Talos/clamav.git clamAV
+          cd clamAV
+          git checkout clamav-1.5.1
 
       - name: Build ClamAV
         if: steps.cache-clamav.outputs.cache-hit != 'true'
