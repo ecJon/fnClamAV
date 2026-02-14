@@ -18,6 +18,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: debian:12
+      options: --user root
 
     steps:
       - name: Checkout code
