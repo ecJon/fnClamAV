@@ -111,12 +111,18 @@ jobs:
         run: |
           mkdir -p app/share/clamav
           cd app/share/clamav
+          # 清理旧的病毒库文件（如果有）
+          rm -f *.cvd *.cld 2>/dev/null || true
           # Download main.cvd
+          echo "Downloading main.cvd..."
           curl -L -O https://database.clamav.net/main.cvd
           # Download daily.cvd
+          echo "Downloading daily.cvd..."
           curl -L -O https://database.clamav.net/daily.cvd
           # Download bytecode.cvd
+          echo "Downloading bytecode.cvd..."
           curl -L -O https://database.clamav.net/bytecode.cvd
+          echo "Virus database files:"
           ls -lh
 
       - name: Build Rust daemon
