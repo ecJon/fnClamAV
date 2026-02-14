@@ -113,19 +113,36 @@ pub async fn scan_status(
         let scan_status = progress.status.clone();
         let is_scanning = scan_status == "scanning";
 
+        // 使用 discovered_files 计算进度（更准确的实时总数）
+        let effective_total = if progress.discovered_files > 0 {
+            progress.discovered_files
+        } else {
+            progress.total_files
+        };
+
         return Json(ScanStatusResponse {
             scan_id: Some(progress.scan_id.clone()),
             status: scan_status.clone(),
             progress: if is_scanning || scan_status == "completed" {
                 Some(ScanProgress {
-                    percent: if progress.total_files > 0 {
-                        (progress.scanned_files as f32 / progress.total_files as f32) * 100.0
+                    percent: if effective_total > 0 {
+                        (progress.scanned_files as f32 / effective_total as f32) * 100.0
                     } else {
                         0.0
                     },
                     scanned: progress.scanned_files as u64,
-                    estimated_total: progress.total_files as u64,
+                    estimated_total: effective_total as u64,
                     current_file: progress.current_file.clone().unwrap_or_default(),
+                    discovered: if progress.discovered_files > 0 {
+                        Some(progress.discovered_files as u64)
+                    } else {
+                        None
+                    },
+                    scan_rate: if progress.scan_rate > 0.0 {
+                        Some(progress.scan_rate)
+                    } else {
+                        None
+                    },
                 })
             } else {
                 None
@@ -159,6 +176,8 @@ pub async fn scan_status(
                         scanned: scan.scanned_files as u64,
                         estimated_total: scan.total_files as u64,
                         current_file: scan.current_file.unwrap_or_default(),
+                        discovered: None,
+                        scan_rate: None,
                     })
                 } else {
                     None

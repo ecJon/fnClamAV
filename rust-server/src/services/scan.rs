@@ -33,6 +33,8 @@ pub struct ActiveScan {
     // 实时进度数据（用于前端查询，避免异步数据库更新导致的时序问题）
     pub scanned_files: u32,
     pub total_files: u32,
+    pub discovered_files: u32,  // 已发现的文件数（两线程模式）
+    pub scan_rate: f32,         // 扫描速率（文件/秒，EMA 计算）
     pub current_file: Option<String>,
     pub threats_found: u32,
     pub status: String,  // "scanning", "completed", "failed", "paused"
@@ -61,6 +63,8 @@ impl ScanService {
             let db = db_for_progress.clone();
             let scanned = progress.scanned_files.0;
             let total = progress.total_files.0;
+            let discovered = progress.discovered_files.0;
+            let rate = progress.scan_rate.map(|r| r.0).unwrap_or(0.0);
             let current_file = progress.current_file.as_ref().map(|f| f.0.clone());
             let threats = progress.threats_found.0;
 
@@ -87,19 +91,23 @@ impl ScanService {
                     if let Some(s) = scans.get_mut(&scan_id) {
                         s.scanned_files = scanned;
                         s.total_files = total;
+                        s.discovered_files = discovered;
+                        s.scan_rate = rate;
                         s.current_file = current_file.clone();
                         s.threats_found = threats;
                     }
                 });
             });
 
-            // 只有未完成时才更新数据库
-            if scanned < total {
+            // 只有未完成时才更新数据库（使用 discovered 作为更准确的总数）
+            if scanned < discovered || discovered == 0 {
                 tokio::spawn(async move {
+                    // 使用 discovered_files 作为 total（更准确的实时总数）
+                    let effective_total = if discovered > 0 { discovered } else { total };
                     let _ = db.update_scan_progress(
                         &scan_id,
                         scanned as i32,
-                        total as i32,
+                        effective_total as i32,
                         current_file.as_deref(),
                     );
                 });
@@ -192,6 +200,8 @@ impl ScanService {
             created_at: chrono::Utc::now(),
             scanned_files: 0,
             total_files: 0,
+            discovered_files: 0,
+            scan_rate: 0.0,
             current_file: None,
             threats_found: 0,
             status: "scanning".to_string(),

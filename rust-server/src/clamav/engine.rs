@@ -2,15 +2,16 @@
 //
 // 此模块实现扫描引擎的核心功能：
 // - 单文件扫描
-// - 目录扫描
-// - 实时进度回调
+// - 目录扫描（两线程模式：发现 + 扫描）
+// - 实时进度回调（含 EMA 速率计算）
 // - 暂停/恢复控制
 // - 扫描任务管理
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use anyhow::Result;
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 
@@ -589,6 +590,8 @@ impl ScanEngine {
                 total_files: TotalFiles(1),
                 threats_found: ThreatsFound(0),
                 current_file: Some(FilePath(path.display().to_string())),
+                discovered_files: DiscoveredFiles(1),
+                scan_rate: None,
             },
         ).await;
 
@@ -614,6 +617,8 @@ impl ScanEngine {
                 total_files: TotalFiles(1),
                 threats_found: ThreatsFound(if is_infected { 1 } else { 0 }),
                 current_file: None,
+                discovered_files: DiscoveredFiles(1),
+                scan_rate: None,
             },
         ).await;
 
@@ -633,8 +638,10 @@ impl ScanEngine {
         ))
     }
 
-    /// 扫描目录（边遍历边扫描模式）
-    /// 参考 ClamAV 官方 clamscan 的实现方式，不预先收集所有文件
+    /// 扫描目录（两线程 + EMA 模式）
+    /// 发现线程：遍历目录，统计文件数，发送文件到队列
+    /// 扫描线程：从队列取文件并扫描
+    /// EMA：计算扫描速率，估算剩余时间
     async fn scan_directory(
         engine: Arc<ClamAVEngine>,
         path: &Path,
@@ -642,139 +649,264 @@ impl ScanEngine {
         progress_callback: Arc<AsyncMutex<Option<ProgressCallback>>>,
         cancel_flag: Arc<AsyncMutex<bool>>,
     ) -> Result<ScanOutcome> {
-        tracing::info!("Starting directory scan (streaming mode): {}", path.display());
+        tracing::info!("Starting directory scan (two-thread + EMA mode): {}", path.display());
 
         // 检查取消标志
         if *cancel_flag.lock().await {
             return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
         }
 
-        let mut scanned: u32 = 0;
-        let mut all_threats = Vec::new();
-        let mut dir_queue = vec![path.to_path_buf()];
-        let mut dirs_scanned: u32 = 0;
+        // 共享状态（使用原子操作提高性能）
+        let discovered_count = Arc::new(AtomicU32::new(0));  // 已发现的文件数
+        let scanned_count = Arc::new(AtomicU32::new(0));     // 已扫描的文件数
+        let threats_count = Arc::new(AtomicU32::new(0));     // 发现的威胁数
+        let discovery_complete = Arc::new(AtomicBool::new(false)); // 发现是否完成
+        let cancelled = Arc::new(AtomicBool::new(false));    // 是否取消
 
-        // 发送初始进度（不确定模式，total=0 表示未知）
+        // 文件队列通道（发现线程 -> 扫描线程）
+        let (file_tx, mut file_rx) = mpsc::unbounded_channel::<PathBuf>();
+
+        // 威胁收集（需要 Mutex 保护）
+        let all_threats = Arc::new(AsyncMutex::new(Vec::new()));
+
+        // 发送初始进度
         Self::update_progress(
             &progress_callback,
             ScanProgress {
                 percent: ProgressPercent(0),
                 scanned_files: ScannedFiles(0),
-                total_files: TotalFiles(0), // 0 表示总数未知
+                total_files: TotalFiles(0),
                 threats_found: ThreatsFound(0),
                 current_file: Some(FilePath(path.display().to_string())),
+                discovered_files: DiscoveredFiles(0),
+                scan_rate: None,
             },
         ).await;
 
-        // 边遍历边扫描
-        while let Some(dir) = dir_queue.pop() {
-            // 检查取消标志
-            {
-                let flag = cancel_flag.lock().await;
-                if *flag {
-                    tracing::info!("Scan cancelled at file {}", scanned);
-                    return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
+        // ========== 发现线程 ==========
+        let discovery_cancelled = cancelled.clone();
+        let discovery_discovered = discovered_count.clone();
+        let discovery_path = path.to_path_buf();
+
+        let discovery_handle = tokio::spawn(async move {
+            let mut dir_queue = vec![discovery_path];
+            let mut dirs_scanned: u32 = 0;
+
+            while let Some(dir) = dir_queue.pop() {
+                // 检查取消
+                if discovery_cancelled.load(Ordering::Relaxed) {
+                    tracing::info!("Discovery cancelled");
+                    break;
                 }
-            }
 
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!("Failed to read directory {}: {}", dir.display(), e);
-                    continue;
-                }
-            };
-
-            dirs_scanned += 1;
-
-            for entry in entries {
-                let entry = match entry {
+                let entries = match std::fs::read_dir(&dir) {
                     Ok(e) => e,
                     Err(e) => {
-                        tracing::trace!("Failed to read entry: {}", e);
+                        tracing::trace!("Failed to read directory {}: {}", dir.display(), e);
                         continue;
                     }
                 };
-                let entry_path = entry.path();
 
-                // 每 100 个文件检查一次取消标志
-                if scanned % 100 == 0 {
-                    let flag = cancel_flag.lock().await;
-                    if *flag {
-                        tracing::info!("Scan cancelled at file {}", scanned);
-                        return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
-                    }
-                }
+                dirs_scanned += 1;
 
-                if entry_path.is_dir() {
-                    // 目录加入队列，稍后处理
-                    dir_queue.push(entry_path);
-                } else if entry_path.is_file() {
-                    // 立即扫描文件
-                    let file_str = entry_path.display().to_string();
+                for entry in entries {
+                    let entry = match entry {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    let entry_path = entry.path();
 
-                    // 更新进度（显示当前正在扫描的文件）
-                    Self::update_progress(
-                        &progress_callback,
-                        ScanProgress {
-                            percent: ProgressPercent(0), // 0 表示不确定进度
-                            scanned_files: ScannedFiles(scanned),
-                            total_files: TotalFiles(0), // 总数未知
-                            threats_found: ThreatsFound(all_threats.len() as u32),
-                            current_file: Some(FilePath(file_str.clone())),
-                        },
-                    ).await;
-
-                    // 执行扫描
-                    let engine_clone = engine.clone();
-                    let file_clone = entry_path.clone();
-                    let options_copy = *options;
-
-                    match tokio::task::spawn_blocking(move || {
-                        engine_clone.scan_file(&file_clone.to_string_lossy(), options_copy)
-                    }).await? {
-                        Ok(result) => {
-                            scanned += 1;
-                            if result.is_infected {
-                                tracing::warn!("THREAT FOUND in {}: {:?}", result.filename, result.virus_name);
-                                all_threats.push((
-                                    FilePath(result.filename),
-                                    VirusName(result.virus_name.unwrap_or_else(|| "Unknown".to_string()))
-                                ));
-                            }
-                        }
-                        Err(e) => {
-                            tracing::trace!("Error scanning {}: {}", entry_path.display(), e);
-                        }
+                    if discovery_cancelled.load(Ordering::Relaxed) {
+                        break;
                     }
 
-                    // 每扫描 50 个文件更新一次进度
-                    if scanned % 50 == 0 {
-                        tracing::debug!("Progress: {} files scanned, {} dirs traversed", scanned, dirs_scanned);
+                    if entry_path.is_dir() {
+                        dir_queue.push(entry_path);
+                    } else if entry_path.is_file() {
+                        // 增加发现计数
+                        discovery_discovered.fetch_add(1, Ordering::Relaxed);
+                        // 发送文件到扫描队列
+                        if file_tx.send(entry_path).is_err() {
+                            break;
+                        }
                     }
                 }
             }
+
+            tracing::info!("Discovery complete: {} dirs traversed", dirs_scanned);
+        });
+
+        // ========== 扫描线程 ==========
+        let scan_cancelled = cancelled.clone();
+        let scan_scanned = scanned_count.clone();
+        let scan_threats = threats_count.clone();
+        let scan_discovered = discovered_count.clone();
+        let scan_discovery_complete = discovery_complete.clone();
+        let scan_all_threats = all_threats.clone();
+        let scan_engine = engine.clone();
+        let scan_options = *options;
+        let scan_progress = progress_callback.clone();
+        let scan_cancel_flag = cancel_flag.clone();
+
+        // EMA 参数
+        const EMA_ALPHA: f32 = 0.3;  // EMA 平滑系数
+
+        let scan_handle = tokio::spawn(async move {
+            let mut ema_rate: f32 = 0.0;  // EMA 扫描速率
+            let mut scan_start_time: Option<Instant> = None;
+            let mut last_progress_update = Instant::now();
+
+            while !scan_cancelled.load(Ordering::Relaxed) {
+                // 尝试接收文件
+                let file_path = match file_rx.try_recv() {
+                    Ok(p) => p,
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        // 队列为空，检查发现是否完成
+                        if scan_discovery_complete.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        // 短暂等待
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                        continue;
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        break;
+                    }
+                };
+
+                // 初始化扫描计时
+                if scan_start_time.is_none() {
+                    scan_start_time = Some(Instant::now());
+                }
+
+                // 检查取消标志
+                {
+                    let flag = scan_cancel_flag.lock().await;
+                    if *flag {
+                        scan_cancelled.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                }
+
+                let file_str = file_path.display().to_string();
+
+                // 执行扫描（在 spawn_blocking 中执行同步操作）
+                let engine_clone = scan_engine.clone();
+                let file_clone = file_path.clone();
+                let options_copy = scan_options;
+
+                let scan_result = tokio::task::spawn_blocking(move || {
+                    engine_clone.scan_file(&file_clone.to_string_lossy(), options_copy)
+                }).await;
+
+                match scan_result {
+                    Ok(Ok(result)) => {
+                        let scanned = scan_scanned.fetch_add(1, Ordering::Relaxed) + 1;
+
+                        if result.is_infected {
+                            tracing::warn!("THREAT FOUND in {}: {:?}", result.filename, result.virus_name);
+                            scan_threats.fetch_add(1, Ordering::Relaxed);
+
+                            let mut threats = scan_all_threats.lock().await;
+                            threats.push((
+                                FilePath(result.filename),
+                                VirusName(result.virus_name.unwrap_or_else(|| "Unknown".to_string()))
+                            ));
+                        }
+
+                        // 计算 EMA 速率
+                        if let Some(start) = scan_start_time {
+                            let elapsed = start.elapsed().as_secs_f32();
+                            if elapsed > 0.0 {
+                                let instant_rate = scanned as f32 / elapsed;
+                                // EMA 公式: new_ema = alpha * new_value + (1 - alpha) * old_ema
+                                if ema_rate == 0.0 {
+                                    ema_rate = instant_rate;
+                                } else {
+                                    ema_rate = EMA_ALPHA * instant_rate + (1.0 - EMA_ALPHA) * ema_rate;
+                                }
+                            }
+                        }
+
+                        // 每 100ms 更新一次进度（避免过于频繁）
+                        if last_progress_update.elapsed().as_millis() > 100 {
+                            let discovered = scan_discovered.load(Ordering::Relaxed);
+                            let threats = scan_threats.load(Ordering::Relaxed);
+
+                            // 计算进度百分比
+                            let percent = if discovered > 0 {
+                                ((scanned as f32 / discovered as f32) * 100.0).min(100.0) as u8
+                            } else {
+                                0
+                            };
+
+                            Self::update_progress(
+                                &scan_progress,
+                                ScanProgress {
+                                    percent: ProgressPercent(percent),
+                                    scanned_files: ScannedFiles(scanned),
+                                    total_files: TotalFiles(discovered), // 使用已发现数作为"当前已知总数"
+                                    threats_found: ThreatsFound(threats),
+                                    current_file: Some(FilePath(file_str.clone())),
+                                    discovered_files: DiscoveredFiles(discovered),
+                                    scan_rate: if ema_rate > 0.0 { Some(ScanRate(ema_rate)) } else { None },
+                                },
+                            ).await;
+
+                            last_progress_update = Instant::now();
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        tracing::trace!("Error scanning {}: {}", file_path.display(), e);
+                    }
+                    Err(e) => {
+                        tracing::trace!("Spawn blocking error: {}", e);
+                    }
+                }
+            }
+
+            tracing::info!("Scan thread complete");
+        });
+
+        // 等待发现线程完成
+        discovery_handle.await?;
+        discovery_complete.store(true, Ordering::Relaxed);
+
+        // 等待扫描线程完成
+        scan_handle.await?;
+
+        // 检查是否被取消
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
         }
 
-        tracing::info!("Directory scan complete: {} files scanned, {} dirs traversed, {} threats found",
-                      scanned, dirs_scanned, all_threats.len());
+        // 获取最终结果
+        let final_scanned = scanned_count.load(Ordering::Relaxed);
+        let final_discovered = discovered_count.load(Ordering::Relaxed);
+        let final_threats = threats_count.load(Ordering::Relaxed);
+        let threats = all_threats.lock().await.clone();
+
+        tracing::info!("Directory scan complete: {}/{} files scanned, {} threats found",
+                      final_scanned, final_discovered, final_threats);
 
         // 最终进度更新
         Self::update_progress(
             &progress_callback,
             ScanProgress {
                 percent: ProgressPercent(100),
-                scanned_files: ScannedFiles(scanned),
-                total_files: TotalFiles(scanned), // 完成时设置总数
-                threats_found: ThreatsFound(all_threats.len() as u32),
+                scanned_files: ScannedFiles(final_scanned),
+                total_files: TotalFiles(final_discovered),
+                threats_found: ThreatsFound(final_threats),
                 current_file: None,
+                discovered_files: DiscoveredFiles(final_discovered),
+                scan_rate: None,
             },
         ).await;
 
         Ok(ScanOutcome::success(
-            scanned, // total_files 设为实际扫描数
-            scanned,
-            all_threats,
+            final_discovered,
+            final_scanned,
+            threats,
         ))
     }
 

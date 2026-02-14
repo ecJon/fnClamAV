@@ -57,6 +57,12 @@ pub struct ScanProgress {
     pub scanned: u64,
     pub estimated_total: u64,
     pub current_file: String,
+    /// 已发现的文件数（两线程模式：发现线程持续更新）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovered: Option<u64>,
+    /// 扫描速率（文件/秒）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan_rate: Option<f32>,
 }
 
 /// 威胁信息

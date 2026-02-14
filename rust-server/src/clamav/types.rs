@@ -88,6 +88,26 @@ impl fmt::Display for ScanStatus {
     }
 }
 
+/// 发现的文件数量（用于两线程模式的进度显示）
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DiscoveredFiles(pub u32);
+
+impl fmt::Display for DiscoveredFiles {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// 扫描速率（文件/秒）
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScanRate(pub f32);
+
+impl fmt::Display for ScanRate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:.1} 文件/秒", self.0)
+    }
+}
+
 /// 扫描进度信息
 #[derive(Debug, Clone)]
 pub struct ScanProgress {
@@ -96,6 +116,10 @@ pub struct ScanProgress {
     pub total_files: TotalFiles,
     pub threats_found: ThreatsFound,
     pub current_file: Option<FilePath>,
+    /// 已发现的文件数（两线程模式：发现线程持续更新）
+    pub discovered_files: DiscoveredFiles,
+    /// 扫描速率（文件/秒，基于 EMA 计算）
+    pub scan_rate: Option<ScanRate>,
 }
 
 impl ScanProgress {
@@ -106,6 +130,8 @@ impl ScanProgress {
             total_files: TotalFiles(0),
             threats_found: ThreatsFound(0),
             current_file: None,
+            discovered_files: DiscoveredFiles(0),
+            scan_rate: None,
         }
     }
 }
@@ -153,6 +179,8 @@ mod tests {
         assert_eq!(progress.scanned_files.0, 0);
         assert_eq!(progress.threats_found.0, 0);
         assert!(progress.current_file.is_none());
+        assert_eq!(progress.discovered_files.0, 0);
+        assert!(progress.scan_rate.is_none());
     }
 
     #[test]
@@ -162,11 +190,15 @@ mod tests {
         progress.scanned_files = ScannedFiles(100);
         progress.threats_found = ThreatsFound(2);
         progress.current_file = Some(FilePath("/test/file.txt".to_string()));
+        progress.discovered_files = DiscoveredFiles(200);
+        progress.scan_rate = Some(ScanRate(45.5));
 
         assert_eq!(progress.percent, ProgressPercent(50));
         assert_eq!(progress.scanned_files, ScannedFiles(100));
         assert_eq!(progress.threats_found, ThreatsFound(2));
         assert_eq!(progress.current_file, Some(FilePath("/test/file.txt".to_string())));
+        assert_eq!(progress.discovered_files, DiscoveredFiles(200));
+        assert_eq!(progress.scan_rate, Some(ScanRate(45.5)));
     }
 
     #[test]
