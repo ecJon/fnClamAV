@@ -134,17 +134,18 @@ impl ScanService {
             match result {
                 Ok(outcome) => {
                     let total = outcome.total_files as i32;
-                    let threats_count = outcome.threats.len();
+                    let threats_count = outcome.threats.len() as i32;
                     let error_msg = if threats_count == 0 {
                         "扫描完成，未发现威胁"
                     } else {
                         "扫描完成，发现威胁"
                     };
-                    let _ = db.finish_scan(&scan_id, "completed", total, Some(error_msg));
+                    tracing::info!("Scan {} completed: total={}, threats={}", scan_id, total, threats_count);
+                    let _ = db.finish_scan(&scan_id, "completed", total, threats_count, Some(error_msg));
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-                    let _ = db.finish_scan(&scan_id, "failed", 0, Some(error_msg.as_str()));
+                    let _ = db.finish_scan(&scan_id, "failed", 0, 0, Some(error_msg.as_str()));
                 }
             }
 
@@ -229,7 +230,7 @@ impl ScanService {
         self.clamav.cancel_scan(&task_id).await?;
 
         // 更新数据库
-        let _ = self.db.finish_scan(scan_id, "stopped", 0, Some("Stopped by user"));
+        let _ = self.db.finish_scan(scan_id, "stopped", 0, 0, Some("Stopped by user"));
 
         // 移除活跃扫描
         let mut scans = self.active_scans.write().await;
@@ -323,7 +324,7 @@ impl ScanService {
             _ => "unknown",
         };
 
-        let threats_count = result.threats.len();
+        let threats_count = result.threats.len() as i32;
         let error_msg = match &result.status {
             crate::clamav::ScanStatus::Failed(msg) => Some(msg.as_str()),
             _ if threats_count == 0 => Some("扫描完成，未发现威胁"),
@@ -334,6 +335,7 @@ impl ScanService {
             scan_id,
             status,
             result.total_files as i32,
+            threats_count,
             error_msg,
         );
 

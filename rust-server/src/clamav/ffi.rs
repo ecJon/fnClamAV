@@ -30,6 +30,7 @@ pub enum cl_verdict_t {
 }
 
 /// 扫描选项结构体
+/// 与 ClamAV 1.5.1 C API 完全对齐（5个字段）
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct cl_scan_options {
@@ -85,24 +86,45 @@ pub enum cl_engine_field {
     CL_ENGINE_CVDCERTSDIR,
 }
 
-// 扫描选项常量
+// 扫描选项常量 - general 字段
 pub const CL_SCAN_GENERAL_ALLMATCHES: u32 = 0x1;
+pub const CL_SCAN_GENERAL_COLLECT_METADATA: u32 = 0x2;
 pub const CL_SCAN_GENERAL_HEURISTICS: u32 = 0x4;
 
+// 扫描选项常量 - parse 字段
 pub const CL_SCAN_PARSE_ARCHIVE: u32 = 0x1;
 pub const CL_SCAN_PARSE_ELF: u32 = 0x2;
 pub const CL_SCAN_PARSE_PDF: u32 = 0x4;
+pub const CL_SCAN_PARSE_SWF: u32 = 0x8;
+pub const CL_SCAN_PARSE_HWP: u32 = 0x10;
+pub const CL_SCAN_PARSE_XMLDOCS: u32 = 0x20;
 pub const CL_SCAN_PARSE_MAIL: u32 = 0x40;
+pub const CL_SCAN_PARSE_OLE2: u32 = 0x80;
+pub const CL_SCAN_PARSE_HTML: u32 = 0x100;
+pub const CL_SCAN_PARSE_PE: u32 = 0x200;
+
+// 默认解析选项：启用所有解析器
+pub const CL_SCAN_PARSE_DEFAULT: u32 = CL_SCAN_PARSE_ARCHIVE
+    | CL_SCAN_PARSE_ELF
+    | CL_SCAN_PARSE_PDF
+    | CL_SCAN_PARSE_SWF
+    | CL_SCAN_PARSE_HWP
+    | CL_SCAN_PARSE_XMLDOCS
+    | CL_SCAN_PARSE_MAIL
+    | CL_SCAN_PARSE_OLE2
+    | CL_SCAN_PARSE_HTML
+    | CL_SCAN_PARSE_PE;
 
 // 错误码常量
 pub const CL_CLEAN: cl_error_t = 0;
 pub const CL_SUCCESS: cl_error_t = 0;
 pub const CL_VIRUS: cl_error_t = 1;
 
-// 数据库选项常量
-pub const CL_DB_PHISHING: u32 = 0x1;
-pub const CL_DB_PHISHING_URLS: u32 = 0x2;
-pub const CL_DB_BYTECODE: u32 = 0x4;
+// 数据库选项常量（与 ClamAV 1.5.1 C API 对齐）
+pub const CL_DB_PHISHING: u32 = 0x2;
+pub const CL_DB_PHISHING_URLS: u32 = 0x8;
+pub const CL_DB_PUA: u32 = 0x10;
+pub const CL_DB_BYTECODE: u32 = 0x2000;
 pub const CL_DB_STDOPT: u32 = CL_DB_PHISHING | CL_DB_PHISHING_URLS | CL_DB_BYTECODE;
 
 // ============ FFI 函数声明 ============
@@ -277,6 +299,7 @@ impl ClamAVEngine {
                 CString::new("<invalid>").unwrap()
             });
             let mut signo: c_uint = 0;
+            tracing::info!("Loading virus database from: {}", db_dir);
             let ret = cl_load(
                 db_dir_cstr.as_ptr(),
                 engine,
@@ -290,8 +313,10 @@ impl ClamAVEngine {
                     format!("cl_load failed with code: {}", ret)
                 ));
             }
+            tracing::info!("Loaded {} signatures from database", signo);
 
             // 编译引擎
+            tracing::info!("Compiling ClamAV engine...");
             let ret = cl_engine_compile(engine);
             if ret != CL_SUCCESS {
                 cl_engine_free(engine);
@@ -299,6 +324,7 @@ impl ClamAVEngine {
                     format!("cl_engine_compile failed with code: {}", ret)
                 ));
             }
+            tracing::info!("ClamAV engine compiled successfully");
 
             Ok(Self {
                 engine,
@@ -322,24 +348,28 @@ impl ClamAVEngine {
                 CString::new("<invalid>").unwrap()
             });
 
-            // 构建扫描选项
+            // 构建扫描选项 - 正确初始化所有 5 个字段
+            // ClamAV 推荐将 parse 设置为 !0 以启用所有解析器
             let mut scan_opts = cl_scan_options {
                 general: 0,
-                parse: 0,
+                parse: !0,  // 启用所有解析器（ClamAV 推荐方式）
                 heuristic: 0,
                 mail: 0,
                 dev: 0,
             };
 
-            if options.scan_archive { scan_opts.parse |= CL_SCAN_PARSE_ARCHIVE; }
-            if options.scan_pdf { scan_opts.parse |= CL_SCAN_PARSE_PDF; }
-            if options.scan_elf { scan_opts.parse |= CL_SCAN_PARSE_ELF; }
-            if options.scan_mail { scan_opts.parse |= CL_SCAN_PARSE_MAIL; }
-            if options.heuristics { scan_opts.general |= CL_SCAN_GENERAL_HEURISTICS; }
+            if options.heuristics {
+                scan_opts.general |= CL_SCAN_GENERAL_HEURISTICS;
+            }
+
+            // 启用 all-match 模式以确保检测所有威胁
+            scan_opts.general |= CL_SCAN_GENERAL_ALLMATCHES;
 
             let mut verdict: cl_verdict_t = cl_verdict_t::CL_VERDICT_NOTHING_FOUND;
             let mut last_alert: *const c_char = ptr::null();
             let mut scanned: u64 = 0;
+
+            tracing::debug!("Calling cl_scanfile_ex for: {}", path);
 
             let ret = cl_scanfile_ex(
                 path_cstr.as_ptr(),
@@ -356,31 +386,56 @@ impl ClamAVEngine {
                 ptr::null_mut(),  // file_type_out
             );
 
-            match ret {
-                CL_CLEAN | CL_SUCCESS => {
+            tracing::debug!("cl_scanfile_ex returned: {}, verdict: {:?} (raw value: {})", ret, verdict, verdict as i32);
+
+            // 重要：cl_scanfile_ex 不会返回 CL_VIRUS，需要检查 verdict_out 参数！
+            // CL_VERDICT_STRONG_INDICATOR = 2 表示检测到病毒/恶意软件
+            // CL_VERDICT_POTENTIALLY_UNWANTED = 3 表示检测到潜在不受欢迎程序
+
+            // 使用整数值进行比较，避免 enum 匹配问题
+            let verdict_value = verdict as i32;
+            tracing::info!("VERDICT CHECK: value={}, STRONG_INDICATOR=2, POTENTIALLY_UNWANTED=3", verdict_value);
+
+            if verdict_value == 2 || verdict_value == 3 {
+                // 病毒/恶意软件检测到
+                tracing::warn!("VIRUS DETECTED! verdict={}", verdict_value);
+                let virus = if !last_alert.is_null() {
+                    let virus_name = CStr::from_ptr(last_alert).to_string_lossy().to_string();
+                    tracing::warn!("VIRUS FOUND in {}: {}", path, virus_name);
+                    Some(virus_name)
+                } else {
+                    tracing::warn!("VIRUS FOUND in {}: Unknown", path);
+                    Some("Unknown".to_string())
+                };
+
+                Ok(ScanResult {
+                    filename: path.to_string(),
+                    virus_name: virus,
+                    is_infected: true,
+                })
+            } else if verdict_value == 1 {
+                // 受信任文件
+                tracing::debug!("File trusted: {}", path);
+                Ok(ScanResult {
+                    filename: path.to_string(),
+                    virus_name: None,
+                    is_infected: false,
+                })
+            } else {
+                // 没有发现威胁 (verdict_value == 0) 或其他情况
+                // 检查返回码是否有错误
+                if ret != CL_CLEAN && ret != CL_SUCCESS {
+                    tracing::error!("cl_scanfile_ex failed for {}: error code {}", path, ret);
+                    Err(ClamAVError::ScanFailed(
+                        format!("cl_scanfile_ex failed with code: {}", ret)
+                    ))
+                } else {
+                    tracing::debug!("File clean: {}", path);
                     Ok(ScanResult {
                         filename: path.to_string(),
                         virus_name: None,
                         is_infected: false,
                     })
-                }
-                CL_VIRUS => {
-                    let virus = if !last_alert.is_null() {
-                        Some(CStr::from_ptr(last_alert).to_string_lossy().to_string())
-                    } else {
-                        Some("Unknown".to_string())
-                    };
-
-                    Ok(ScanResult {
-                        filename: path.to_string(),
-                        virus_name: virus,
-                        is_infected: true,
-                    })
-                }
-                _ => {
-                    Err(ClamAVError::ScanFailed(
-                        format!("cl_scanfile_ex failed with code: {}", ret)
-                    ))
                 }
             }
         }

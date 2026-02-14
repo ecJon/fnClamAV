@@ -633,7 +633,8 @@ impl ScanEngine {
         ))
     }
 
-    /// 扫描目录
+    /// 扫描目录（边遍历边扫描模式）
+    /// 参考 ClamAV 官方 clamscan 的实现方式，不预先收集所有文件
     async fn scan_directory(
         engine: Arc<ClamAVEngine>,
         path: &Path,
@@ -641,114 +642,38 @@ impl ScanEngine {
         progress_callback: Arc<AsyncMutex<Option<ProgressCallback>>>,
         cancel_flag: Arc<AsyncMutex<bool>>,
     ) -> Result<ScanOutcome> {
-        tracing::info!("Starting directory scan: {}", path.display());
+        tracing::info!("Starting directory scan (streaming mode): {}", path.display());
 
         // 检查取消标志
         if *cancel_flag.lock().await {
             return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
         }
 
-        // 收集所有文件（带取消检查）
-        let files = Self::collect_files_with_cancel(path, cancel_flag.clone()).await?;
-        let total = files.len() as u32;
-        tracing::info!("Found {} files to scan", total);
-
-        let mut scanned = 0u32;
+        let mut scanned: u32 = 0;
         let mut all_threats = Vec::new();
+        let mut dir_queue = vec![path.to_path_buf()];
+        let mut dirs_scanned: u32 = 0;
 
-        for (idx, file) in files.iter().enumerate() {
-            // 检查取消标志
-            if *cancel_flag.lock().await {
-                tracing::info!("Scan cancelled at file {}", idx);
-                return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
-            }
-
-            // 更新进度
-            let percent = if files.len() > 0 {
-                ((idx + 1) * 100 / files.len()) as u8
-            } else {
-                100
-            };
-            Self::update_progress(
-                &progress_callback,
-                ScanProgress {
-                    percent: ProgressPercent(percent),
-                    scanned_files: ScannedFiles(scanned),
-                    total_files: TotalFiles(total),
-                    threats_found: ThreatsFound(all_threats.len() as u32),
-                    current_file: Some(FilePath(file.display().to_string())),
-                },
-            ).await;
-
-            // 扫描文件
-            let engine_clone = engine.clone();
-            let file_clone = file.to_path_buf();
-            let options_copy = *options;
-            let file_str = file.display().to_string();
-
-            tracing::debug!("Scanning file {}/{}: {}", idx + 1, total, file_str);
-
-            match tokio::task::spawn_blocking(move || {
-                engine_clone.scan_file(&file_clone.to_string_lossy(), options_copy)
-            }).await? {
-                Ok(result) => {
-                    scanned += 1;
-                    if result.is_infected {
-                        tracing::warn!("THREAT FOUND in {}: {:?}", result.filename, result.virus_name);
-                        all_threats.push((
-                            FilePath(result.filename),
-                            VirusName(result.virus_name.unwrap_or_else(|| "Unknown".to_string()))
-                        ));
-                    } else {
-                        tracing::trace!("File clean: {}", file_str);
-                    }
-                }
-                Err(e) => {
-                    // 记录错误但继续扫描
-                    tracing::error!("Error scanning {}: {}", file.display(), e);
-                }
-            }
-        }
-
-        tracing::info!("Directory scan complete: {}/{} files scanned, {} threats found",
-                      scanned, total, all_threats.len());
-
-        // 最终进度更新
+        // 发送初始进度（不确定模式，total=0 表示未知）
         Self::update_progress(
             &progress_callback,
             ScanProgress {
-                percent: ProgressPercent(100),
-                scanned_files: ScannedFiles(scanned),
-                total_files: TotalFiles(total),
-                threats_found: ThreatsFound(all_threats.len() as u32),
-                current_file: None,
+                percent: ProgressPercent(0),
+                scanned_files: ScannedFiles(0),
+                total_files: TotalFiles(0), // 0 表示总数未知
+                threats_found: ThreatsFound(0),
+                current_file: Some(FilePath(path.display().to_string())),
             },
         ).await;
 
-        Ok(ScanOutcome::success(
-            total,
-            scanned,
-            all_threats,
-        ))
-    }
-
-    /// 收集目录中的所有文件
-    /// 收集目录中的所有文件（带取消检查）
-    async fn collect_files_with_cancel(
-        path: &Path,
-        cancel_flag: Arc<AsyncMutex<bool>>,
-    ) -> Result<Vec<PathBuf>> {
-        let mut files = Vec::new();
-        let mut dir_queue = vec![path.to_path_buf()];
-
-        // 使用迭代方式而不是递归，避免栈溢出
+        // 边遍历边扫描
         while let Some(dir) = dir_queue.pop() {
-            // 每处理一个目录检查一次取消标志
+            // 检查取消标志
             {
                 let flag = cancel_flag.lock().await;
                 if *flag {
-                    tracing::info!("File collection cancelled, collected {} files so far", files.len());
-                    return Err(anyhow::anyhow!("Scan cancelled during file collection"));
+                    tracing::info!("Scan cancelled at file {}", scanned);
+                    return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
                 }
             }
 
@@ -760,36 +685,97 @@ impl ScanEngine {
                 }
             };
 
+            dirs_scanned += 1;
+
             for entry in entries {
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
-                        tracing::warn!("Failed to read entry: {}", e);
+                        tracing::trace!("Failed to read entry: {}", e);
                         continue;
                     }
                 };
-                let path = entry.path();
+                let entry_path = entry.path();
 
-                if path.is_dir() {
-                    dir_queue.push(path);
-                } else if path.is_file() {
-                    files.push(path);
+                // 每 100 个文件检查一次取消标志
+                if scanned % 100 == 0 {
+                    let flag = cancel_flag.lock().await;
+                    if *flag {
+                        tracing::info!("Scan cancelled at file {}", scanned);
+                        return Ok(ScanOutcome::failed("Scan cancelled".to_string()));
+                    }
                 }
 
-                // 每 1000 个文件检查一次取消标志（使用 try_lock 避免频繁阻塞）
-                if files.len() % 1000 == 0 {
-                    if let Ok(flag) = cancel_flag.try_lock() {
-                        if *flag {
-                            tracing::info!("File collection cancelled at {} files", files.len());
-                            return Err(anyhow::anyhow!("Scan cancelled during file collection"));
+                if entry_path.is_dir() {
+                    // 目录加入队列，稍后处理
+                    dir_queue.push(entry_path);
+                } else if entry_path.is_file() {
+                    // 立即扫描文件
+                    let file_str = entry_path.display().to_string();
+
+                    // 更新进度（显示当前正在扫描的文件）
+                    Self::update_progress(
+                        &progress_callback,
+                        ScanProgress {
+                            percent: ProgressPercent(0), // 0 表示不确定进度
+                            scanned_files: ScannedFiles(scanned),
+                            total_files: TotalFiles(0), // 总数未知
+                            threats_found: ThreatsFound(all_threats.len() as u32),
+                            current_file: Some(FilePath(file_str.clone())),
+                        },
+                    ).await;
+
+                    // 执行扫描
+                    let engine_clone = engine.clone();
+                    let file_clone = entry_path.clone();
+                    let options_copy = *options;
+
+                    match tokio::task::spawn_blocking(move || {
+                        engine_clone.scan_file(&file_clone.to_string_lossy(), options_copy)
+                    }).await? {
+                        Ok(result) => {
+                            scanned += 1;
+                            if result.is_infected {
+                                tracing::warn!("THREAT FOUND in {}: {:?}", result.filename, result.virus_name);
+                                all_threats.push((
+                                    FilePath(result.filename),
+                                    VirusName(result.virus_name.unwrap_or_else(|| "Unknown".to_string()))
+                                ));
+                            }
                         }
+                        Err(e) => {
+                            tracing::trace!("Error scanning {}: {}", entry_path.display(), e);
+                        }
+                    }
+
+                    // 每扫描 50 个文件更新一次进度
+                    if scanned % 50 == 0 {
+                        tracing::debug!("Progress: {} files scanned, {} dirs traversed", scanned, dirs_scanned);
                     }
                 }
             }
         }
 
-        tracing::info!("Collected {} files from {}", files.len(), path.display());
-        Ok(files)
+        tracing::info!("Directory scan complete: {} files scanned, {} dirs traversed, {} threats found",
+                      scanned, dirs_scanned, all_threats.len());
+
+        // 最终进度更新
+        Self::update_progress(
+            &progress_callback,
+            ScanProgress {
+                percent: ProgressPercent(100),
+                scanned_files: ScannedFiles(scanned),
+                total_files: TotalFiles(scanned), // 完成时设置总数
+                threats_found: ThreatsFound(all_threats.len() as u32),
+                current_file: None,
+            },
+        ).await;
+
+        Ok(ScanOutcome::success(
+            scanned, // total_files 设为实际扫描数
+            scanned,
+            all_threats,
+        ))
     }
 
     /// 更新进度回调

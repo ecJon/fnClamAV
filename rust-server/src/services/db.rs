@@ -185,6 +185,7 @@ impl Database {
         scan_id: &str,
         status: &str,
         total_files: i32,
+        threats_found: i32,
         error_message: Option<&str>,
     ) -> SqliteResult<()> {
         let conn = self.get_conn()?;
@@ -192,12 +193,13 @@ impl Database {
 
         // 完成扫描时，scanned_files 应该等于 total_files
         conn.execute(
-            "UPDATE scan_history SET status = ?1, end_time = ?2, total_files = ?3, scanned_files = ?3, error_message = ?4
-             WHERE scan_id = ?5",
+            "UPDATE scan_history SET status = ?1, end_time = ?2, total_files = ?3, scanned_files = ?3, threats_found = ?4, error_message = ?5
+             WHERE scan_id = ?6",
             [
                 status,
                 &end_time.to_string(),
                 &total_files.to_string(),
+                &threats_found.to_string(),
                 error_message.unwrap_or(""),
                 scan_id,
             ],
