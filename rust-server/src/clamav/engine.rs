@@ -392,21 +392,26 @@ impl ScanEngine {
                 }
 
                 EngineCommand::CancelTask { task_id, reply } => {
+                    // 首先设置取消标志
+                    {
+                        let mut flag = cancel_flag.lock().await;
+                        *flag = true;
+                        tracing::info!("Set cancel flag for task: {}", task_id);
+                    }
+
                     let mut queue = task_queue.lock().await;
                     let current = queue.current();
 
                     // 检查是否是当前正在运行的任务
                     let is_current = match current {
-                        Some(task) if task.id == task_id => true,
+                        Some(task) if task.id == task_id => {
+                            // 立即清理 current_task，不等待后台任务完成
+                            queue.take_current();
+                            tracing::info!("Cleared current task: {}", task_id);
+                            true
+                        }
                         _ => false,
                     };
-
-                    if is_current {
-                        // 设置取消标志来停止正在运行的扫描
-                        let mut flag = cancel_flag.lock().await;
-                        *flag = true;
-                        tracing::info!("Set cancel flag for running task: {}", task_id);
-                    }
 
                     // 从队列中取消任务
                     let result = queue.cancel(&task_id);
@@ -734,35 +739,28 @@ impl ScanEngine {
         cancel_flag: Arc<AsyncMutex<bool>>,
     ) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
-        let mut check_counter = 0u32;
+        let mut dir_queue = vec![path.to_path_buf()];
 
-        fn visit(
-            dir: &Path,
-            files: &mut Vec<PathBuf>,
-            cancel_flag: &Arc<AsyncMutex<bool>>,
-            check_counter: &mut u32,
-        ) -> Result<bool> {
-            let entries = match std::fs::read_dir(dir) {
+        // 使用迭代方式而不是递归，避免栈溢出
+        while let Some(dir) = dir_queue.pop() {
+            // 每处理一个目录检查一次取消标志
+            {
+                let flag = cancel_flag.lock().await;
+                if *flag {
+                    tracing::info!("File collection cancelled, collected {} files so far", files.len());
+                    return Err(anyhow::anyhow!("Scan cancelled during file collection"));
+                }
+            }
+
+            let entries = match std::fs::read_dir(&dir) {
                 Ok(e) => e,
                 Err(e) => {
                     tracing::warn!("Failed to read directory {}: {}", dir.display(), e);
-                    return Ok(true); // 继续而不是失败
+                    continue;
                 }
             };
 
             for entry in entries {
-                // 每 100 个文件检查一次取消标志
-                *check_counter += 1;
-                if *check_counter % 100 == 0 {
-                    // 使用 try_lock 避免阻塞
-                    if let Ok(flag) = cancel_flag.try_lock() {
-                        if *flag {
-                            tracing::info!("File collection cancelled");
-                            return Ok(false); // 被取消
-                        }
-                    }
-                }
-
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
@@ -773,28 +771,21 @@ impl ScanEngine {
                 let path = entry.path();
 
                 if path.is_dir() {
-                    // 递归访问子目录
-                    if let Err(e) = visit(&path, files, cancel_flag, check_counter) {
-                        tracing::warn!("Failed to visit directory {}: {}", path.display(), e);
-                    }
-                    // 检查是否被取消
-                    if let Ok(flag) = cancel_flag.try_lock() {
-                        if *flag {
-                            return Ok(false);
-                        }
-                    }
+                    dir_queue.push(path);
                 } else if path.is_file() {
                     files.push(path);
                 }
+
+                // 每 1000 个文件检查一次取消标志（使用 try_lock 避免频繁阻塞）
+                if files.len() % 1000 == 0 {
+                    if let Ok(flag) = cancel_flag.try_lock() {
+                        if *flag {
+                            tracing::info!("File collection cancelled at {} files", files.len());
+                            return Err(anyhow::anyhow!("Scan cancelled during file collection"));
+                        }
+                    }
+                }
             }
-            Ok(true)
-        }
-
-        let completed = visit(path, &mut files, &cancel_flag, &mut check_counter)?;
-
-        if !completed {
-            tracing::info!("File collection was cancelled, collected {} files so far", files.len());
-            return Err(anyhow::anyhow!("Scan cancelled during file collection"));
         }
 
         tracing::info!("Collected {} files from {}", files.len(), path.display());
