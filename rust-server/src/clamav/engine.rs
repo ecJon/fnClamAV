@@ -503,29 +503,36 @@ impl ScanEngine {
         let options = task.options.clone();
         drop(queue);
 
-        // 执行扫描
-        tracing::info!("Starting scan execution for task {}", task_id);
-        let result = Self::execute_scan(
-            engine.clone(),
-            &target,
-            &options,
-            progress_callback.clone(),
-            cancel_flag.clone(),
-        ).await;
-
-        // 更新任务状态
-        tracing::info!("Scan task {} completed with result: {:?}", task_id, result.is_ok());
-        let mut queue = task_queue.lock().await;
-        queue.take_current();
-        drop(queue);
-
-        // 调用完成回调
-        let cb = completion_callback.lock().await;
-        if let Some(ref callback) = *cb {
-            tracing::info!("Calling completion callback for task {}", task_id);
-            callback(&task_id, &result);
+        // 重置取消标志
+        {
+            let mut flag = cancel_flag.lock().await;
+            *flag = false;
         }
-        drop(cb);
+
+        // 在独立的 tokio task 中执行扫描，避免阻塞命令循环
+        tokio::spawn(async move {
+            tracing::info!("Starting scan execution for task {} in background", task_id);
+            let result = Self::execute_scan(
+                engine,
+                &target,
+                &options,
+                progress_callback,
+                cancel_flag.clone(),
+            ).await;
+
+            // 更新任务状态
+            tracing::info!("Scan task {} completed with result: {:?}", task_id, result.is_ok());
+            let mut queue = task_queue.lock().await;
+            queue.take_current();
+            drop(queue);
+
+            // 调用完成回调
+            let cb = completion_callback.lock().await;
+            if let Some(ref callback) = *cb {
+                tracing::info!("Calling completion callback for task {}", task_id);
+                callback(&task_id, &result);
+            }
+        });
     }
 
     /// 执行扫描
