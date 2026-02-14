@@ -100,13 +100,9 @@ jobs:
             -DENABLE_STATIC_LIB=OFF \
             -DENABLE_TESTS=OFF \
             -DENABLE_EXAMPLES=OFF \
-            -DDISABLE_MILTER=ON \
-            -DDISABLE_CLAMSCAN=ON \
-            -DDISABLE_CLAMD=ON \
-            -DDISABLE_FRESHCLAM=OFF \
-            -DDISABLE_CLAMONACC=ON \
-            -DDISABLE_CLAMAV_SUBMIT=ON \
-            -DDISABLE_UNRAR=ON \
+            -DENABLE_MILTER=OFF \
+            -DENABLE_CLAMONACC=OFF \
+            -DENABLE_UNRAR=OFF \
             -GNinja
           ninja
           ninja install
