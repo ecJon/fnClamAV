@@ -61,7 +61,7 @@ jobs:
             libpcre2-dev \
             ninja-build \
             libxml2-dev \
-            libiconv-hook-dev
+            libncurses-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
