@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# ClamAV 杀毒软件 CGI 脚本
+# ClamAV飞牛版 CGI 脚本
 # 功能：转发 API 请求到 Rust 守护进程，服务静态文件
 #
 
