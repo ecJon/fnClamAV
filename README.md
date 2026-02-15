@@ -166,12 +166,12 @@ sudo apt-get install -y \
 
 ```ini
 appname               = fnnas.clamav
-version               = 1.0.0
-display_name          = ClamAV 杀毒软件
+version               = 1.3.1
+display_name          = ClamAV飞牛版
 platform              = x86
 source                = thirdparty
-maintainer            = fnOS
-distributor           = ClamAV Team
+maintainer            = ecJon
+distributor           = ecJon
 desktop_uidir         = ui
 desktop_applaunchname = fnnas.clamav.Application
 category              = security
@@ -335,6 +335,31 @@ WebSocket connection failed
 
 ## 版本历史
 
+### 1.3.1 (2025-02-15)
+
+- 新增威胁列表批量操作功能
+- 添加 GitHub Actions 自动构建发布
+- 使用 Debian 12 容器编译以兼容飞牛系统
+- 启用 UNRAR 支持
+
+### 1.3.0 (2025-02-14)
+
+- 更新品牌为"ClamAV飞牛版"
+- 更新应用图标
+
+### 1.2.0 (2025-02-14)
+
+- 实现双线程扫描模式
+- 添加 EMA 速率计算
+- 修复威胁列表显示和实时更新
+- 流式扫描模式优化
+
+### 1.1.0 (2025-02-13)
+
+- 新增 WebSocket 实时进度推送
+- 整合构建脚本
+- 修复进度条更新问题
+
 ### 1.0.0 (2025-02-12)
 
 - 初始版本发布
@@ -343,9 +368,3 @@ WebSocket connection failed
 - 病毒库更新
 - 威胁隔离
 - Web UI
-
-### 1.1.0 (2025-02-13)
-
-- 新增 WebSocket 实时进度推送
-- 整合构建脚本
-- 修复进度条更新问题
