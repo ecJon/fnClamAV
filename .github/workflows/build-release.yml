@@ -51,6 +51,7 @@ jobs:
             curl \
             git \
             file \
+            zlib1g-dev \
             libssl-dev \
             libcurl4-openssl-dev \
             libjson-c-dev \
@@ -58,7 +59,9 @@ jobs:
             liblzma-dev \
             libzstd-dev \
             libpcre2-dev \
-            ninja-build
+            ninja-build \
+            libxml2-dev \
+            libiconv-hook-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
