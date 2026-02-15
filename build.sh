@@ -149,7 +149,7 @@ echo ""
 
 # 检查 libclamav.so
 CLAMAV_LIB_DIR="${PROJECT_DIR}/app/lib"
-if [ -d "${CLAMAV_LIB_DIR}" ] && [ -n "$(ls -A ${CLAMAV_LIB_DIR}/*.so 2>/dev/null)" ]; then
+if [ -d "${CLAMAV_LIB_DIR}" ] && [ -n "$(ls -A ${CLAMAV_LIB_DIR}/libclamav.so* 2>/dev/null)" ]; then
     echo "✅ libclamav.so found:"
     ls -lh "${CLAMAV_LIB_DIR}/"libclamav.so* 2>/dev/null | head -1
 else
