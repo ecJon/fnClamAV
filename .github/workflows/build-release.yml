@@ -102,9 +102,16 @@ jobs:
             app/lib
             app/bin
             app/include
-          key: ${{ matrix.arch }}-clamav-1.5.1-v1
+          key: ${{ matrix.arch }}-clamav-1.5.1-v2
           restore-keys: |
             ${{ matrix.arch }}-clamav-
+
+      - name: Debug - Check cache status
+        run: |
+          echo "Cache hit: ${{ steps.cache-clamav.outputs.cache-hit }}"
+          echo "Architecture: ${{ matrix.arch }}"
+          echo "app/lib contents:"
+          ls -la app/lib/ 2>/dev/null || echo "app/lib does not exist"
 
       - name: Clone ClamAV source
         if: steps.cache-clamav.outputs.cache-hit != 'true'
