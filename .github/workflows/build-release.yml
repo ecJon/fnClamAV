@@ -188,6 +188,21 @@ jobs:
           fi
           echo "✅ Virus database files verified successfully"
 
+      - name: Debug - Check ClamAV library before Rust build
+        run: |
+          echo "=== DEBUG: Checking ClamAV library status ==="
+          echo "Architecture: ${{ matrix.arch }}"
+          echo ""
+          echo "app/lib directory:"
+          ls -la app/lib/ 2>/dev/null || echo "app/lib does not exist!"
+          echo ""
+          echo "Checking library files:"
+          file app/lib/libclamav.so* 2>/dev/null || echo "No libclamav.so files found"
+          echo ""
+          echo "Library file sizes:"
+          du -h app/lib/*.so* 2>/dev/null || echo "No .so files in app/lib"
+          echo "=== END DEBUG ==="
+
       - name: Build Rust daemon
         run: |
           cd rust-server
