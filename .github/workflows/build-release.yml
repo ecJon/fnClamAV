@@ -130,11 +130,15 @@ jobs:
         if: steps.cache-clamav.outputs.cache-hit != 'true'
         run: |
           echo "=== BUILDING CLAMAV for ${{ matrix.arch }} ==="
+          # 获取实际工作目录（容器内路径）
+          WORKSPACE="$(pwd)"
+          echo "Workspace: $WORKSPACE"
+
           mkdir -p clamAV/build
           cd clamAV/build
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/app \
+            -DCMAKE_INSTALL_PREFIX=$WORKSPACE/app \
             -DBUILD_SHARED_LIBS=ON \
             -DENABLE_STATIC_LIB=OFF \
             -DENABLE_TESTS=OFF \
