@@ -108,22 +108,28 @@ jobs:
 
       - name: Debug - Check cache status
         run: |
-          echo "Cache hit: ${{ steps.cache-clamav.outputs.cache-hit }}"
+          echo "=== CACHE DEBUG ==="
+          echo "Cache hit: '${{ steps.cache-clamav.outputs.cache-hit }}'"
           echo "Architecture: ${{ matrix.arch }}"
+          echo "Cache key: ${{ matrix.arch }}-clamav-1.5.1-v2"
+          echo ""
           echo "app/lib contents:"
           ls -la app/lib/ 2>/dev/null || echo "app/lib does not exist"
+          echo "=== END CACHE DEBUG ==="
 
       - name: Clone ClamAV source
         if: steps.cache-clamav.outputs.cache-hit != 'true'
         run: |
+          echo "=== CLONING CLAMAV (cache miss) ==="
           git clone https://github.com/Cisco-Talos/clamav.git clamAV
           cd clamAV
           git checkout clamav-1.5.1
+          echo "=== CLONE COMPLETE ==="
 
       - name: Build ClamAV
         if: steps.cache-clamav.outputs.cache-hit != 'true'
         run: |
-          echo "Building ClamAV shared library for ${{ matrix.arch }}..."
+          echo "=== BUILDING CLAMAV for ${{ matrix.arch }} ==="
           mkdir -p clamAV/build
           cd clamAV/build
           cmake .. \
