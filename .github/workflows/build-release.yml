@@ -103,6 +103,8 @@ jobs:
       - name: Clone ClamAV source
         if: steps.cache-clamav.outputs.cache-hit != 'true'
         run: |
+          # 清理可能存在的旧架构文件（仓库中的 x86_64 文件）
+          rm -rf app/lib app/bin app/include
           git clone https://github.com/Cisco-Talos/clamav.git clamAV
           cd clamAV
           git checkout clamav-1.5.1
