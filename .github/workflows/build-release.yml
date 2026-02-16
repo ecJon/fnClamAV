@@ -17,7 +17,18 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # 一个架构失败不影响另一个
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            platform: x86
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            platform: arm64
+
+    runs-on: ${{ matrix.runner }}
     container:
       image: debian:12
       options: --user root
@@ -39,7 +50,7 @@ jobs:
           # Remove 'v' prefix if present
           VERSION="${VERSION#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
+          echo "Building version: $VERSION for ${{ matrix.arch }}"
 
       - name: Install system dependencies
         run: |
@@ -73,9 +84,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             rust-server/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ matrix.arch }}-cargo-
 
       - name: Cache ClamAV build
         id: cache-clamav
@@ -85,9 +96,9 @@ jobs:
             app/lib
             app/bin
             app/include
-          key: ${{ runner.os }}-clamav-1.5.1-v2
+          key: ${{ matrix.arch }}-clamav-1.5.1-v1
           restore-keys: |
-            ${{ runner.os }}-clamav-
+            ${{ matrix.arch }}-clamav-
 
       - name: Clone ClamAV source
         if: steps.cache-clamav.outputs.cache-hit != 'true'
@@ -99,7 +110,7 @@ jobs:
       - name: Build ClamAV
         if: steps.cache-clamav.outputs.cache-hit != 'true'
         run: |
-          echo "Building ClamAV shared library..."
+          echo "Building ClamAV shared library for ${{ matrix.arch }}..."
           mkdir -p clamAV/build
           cd clamAV/build
           cmake .. \
@@ -189,26 +200,30 @@ jobs:
           echo ""
           echo "=== ClamAV binaries ==="
           ls -lh app/bin/
+          echo ""
+          echo "=== Architecture ==="
+          file app/server/clamav-daemon
 
       - name: Package FPK
         run: |
           chmod +x build.sh
-          ./build.sh --skip-clamav
+          ./build.sh --skip-clamav --platform ${{ matrix.platform }}
 
-          # Rename FPK with version
+          # Rename FPK with version and arch
           VERSION="${{ steps.version.outputs.version }}"
-          mv dist/fnnas.clamav.fpk dist/fnnas.clamav-${VERSION}.fpk
+          ARCH="${{ matrix.arch }}"
+          mv dist/fnnas.clamav.fpk dist/fnnas.clamav-${VERSION}-${ARCH}.fpk
 
-          echo "fpk_path=dist/fnnas.clamav-${VERSION}.fpk" >> $GITHUB_OUTPUT
-          echo "fpk_name=fnnas.clamav-${VERSION}.fpk" >> $GITHUB_OUTPUT
+          echo "fpk_path=dist/fnnas.clamav-${VERSION}-${ARCH}.fpk" >> $GITHUB_OUTPUT
+          echo "fpk_name=fnnas.clamav-${VERSION}-${ARCH}.fpk" >> $GITHUB_OUTPUT
 
           ls -lh dist/
 
       - name: Upload FPK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fnnas.clamav-${{ steps.version.outputs.version }}.fpk
-          path: dist/fnnas.clamav-${{ steps.version.outputs.version }}.fpk
+          name: fnnas.clamav-${{ steps.version.outputs.version }}-${{ matrix.arch }}
+          path: dist/fnnas.clamav-${{ steps.version.outputs.version }}-${{ matrix.arch }}.fpk
           retention-days: 30
 
   release:
@@ -229,11 +244,24 @@ jobs:
           VERSION="${VERSION#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Download FPK artifact
+      - name: Download x86_64 artifact
         uses: actions/download-artifact@v4
         with:
-          name: fnnas.clamav-${{ steps.version.outputs.version }}.fpk
+          name: fnnas.clamav-${{ steps.version.outputs.version }}-x86_64
           path: ./dist
+        continue-on-error: true
+
+      - name: Download aarch64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: fnnas.clamav-${{ steps.version.outputs.version }}-aarch64
+          path: ./dist
+        continue-on-error: true
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded files:"
+          ls -lh dist/ || echo "No files found"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -252,8 +280,14 @@ jobs:
             - 扫描历史记录
             - 批量威胁处理
 
+            ### 下载说明
+            | 文件 | 架构 | 适用设备 |
+            |------|------|----------|
+            | `fnnas.clamav-${{ steps.version.outputs.version }}-x86_64.fpk` | x86_64 | Intel/AMD 处理器 |
+            | `fnnas.clamav-${{ steps.version.outputs.version }}-aarch64.fpk` | ARM64 | 树莓派/ARM 处理器 |
+
             ### 安装方法
-            1. 下载 `fnnas.clamav-${{ steps.version.outputs.version }}.fpk`
+            1. 根据你的设备架构下载对应的 FPK 文件
             2. 在飞牛OS应用商店中选择手动安装
             3. 上传FPK文件完成安装
 
@@ -261,7 +295,7 @@ jobs:
 
             **完整更新日志请查看 [commits](https://github.com/${{ github.repository }}/commits/${{ steps.version.outputs.version }})**
           files: |
-            dist/fnnas.clamav-${{ steps.version.outputs.version }}.fpk
+            dist/*.fpk
           draft: false
           prerelease: false
         env:

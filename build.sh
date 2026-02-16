@@ -2,13 +2,14 @@
 set -e
 
 # ========================================
-# ClamAV 杀毒软件 - 统一构建打包脚本
+# ClamAV 飞牛版 - 统一构建打包脚本
 # ========================================
-# 用法: ./build.sh [--clean] [--skip-clamav]
+# 用法: ./build.sh [--clean] [--skip-clamav] [--platform <x86|arm64>]
 #
 # 选项:
 #   --clean         清理所有构建缓存和产物
 #   --skip-clamav   跳过 ClamAV 动态库构建（假设已存在）
+#   --platform      指定目标平台 (x86 或 arm64)，默认自动检测
 #
 # ========================================
 
@@ -20,9 +21,10 @@ CLAMAV_BUILD_DIR="${PROJECT_DIR}/clamAV/build"
 # 解析参数
 CLEAN_BUILD=false
 SKIP_CLAMAV=false
+PLATFORM=""
 
-for arg in "$@"; do
-    case $arg in
+while [[ $# -gt 0 ]]; do
+    case $1 in
         --clean)
             CLEAN_BUILD=true
             shift
@@ -31,8 +33,46 @@ for arg in "$@"; do
             SKIP_CLAMAV=true
             shift
             ;;
+        --platform)
+            PLATFORM="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
     esac
 done
+
+# 自动检测平台（如果未指定）
+if [ -z "$PLATFORM" ]; then
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64|amd64)
+            PLATFORM="x86"
+            ;;
+        aarch64|arm64)
+            PLATFORM="arm64"
+            ;;
+        *)
+            echo "❌ Unsupported architecture: $ARCH"
+            echo "   Please specify --platform x86 or --platform arm64"
+            exit 1
+            ;;
+    esac
+    echo "ℹ️  Auto-detected platform: $PLATFORM (arch: $ARCH)"
+fi
+
+# 验证平台参数
+if [[ "$PLATFORM" != "x86" && "$PLATFORM" != "arm64" ]]; then
+    echo "❌ Invalid platform: $PLATFORM"
+    echo "   Supported platforms: x86, arm64"
+    exit 1
+fi
+
+echo "======================================"
+echo "  🎯 Target Platform: $PLATFORM"
+echo "======================================"
+echo ""
 
 # ========================================
 # 1. 清理缓存
@@ -222,9 +262,12 @@ mkdir -p "${BUILD_TEMP}"
 
 # 复制根目录文件
 echo "📋 Copying root files..."
-cp "${PROJECT_DIR}/manifest" "${BUILD_TEMP}/"
 cp "${PROJECT_DIR}/ICON.PNG" "${BUILD_TEMP}/"
 cp "${PROJECT_DIR}/ICON_256.PNG" "${BUILD_TEMP}/"
+
+# 动态生成 manifest 文件（替换 platform 字段）
+echo "📝 Generating manifest for platform: $PLATFORM"
+sed "s/^platform.*=.*/platform              = $PLATFORM/" "${PROJECT_DIR}/manifest" > "${BUILD_TEMP}/manifest"
 
 # 复制目录
 echo "📂 Copying directories..."
@@ -264,6 +307,7 @@ echo "======================================"
 echo ""
 echo "📦 Package: ${OUTPUT_DIR}/${FPK_NAME}"
 echo "📊 Size: ${FPK_SIZE}"
+echo "🖥️  Platform: ${PLATFORM}"
 echo ""
 echo "🚀 Ready to install on fnOS!"
 echo ""
