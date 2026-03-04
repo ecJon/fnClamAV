@@ -43,7 +43,7 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
 
     Json(json!({
         "status": service_status,
-        "version": "1.0.0",
+        "version": "1.3.3",
         "service": "clamav-daemon",
         "scan_in_progress": is_scanning,
         "current_scan_id": scan_id,

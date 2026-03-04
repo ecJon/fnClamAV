@@ -4,14 +4,6 @@ use std::path::Path;
 pub fn init_db(db_path: &str) -> SqliteResult<()> {
     let mut conn = Connection::open(db_path)?;
 
-    // 清理僵尸记录：将所有未完成的扫描标记为失败
-    // 这些记录可能是服务异常中断时遗留的
-    conn.execute(
-        "UPDATE scan_history SET status = 'failed', error_message = 'Service interrupted'
-         WHERE status = 'scanning'",
-        [],
-    )?;
-
     // 创建扫描历史表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS scan_history (
@@ -114,6 +106,15 @@ pub fn init_db(db_path: &str) -> SqliteResult<()> {
             [],
         )?;
     }
+
+    // 清理僵尸记录：将所有未完成的扫描标记为失败
+    // 这些记录可能是服务异常中断时遗留的
+    // 注意：这个操作必须在表创建之后执行
+    conn.execute(
+        "UPDATE scan_history SET status = 'failed', error_message = 'Service interrupted'
+         WHERE status = 'scanning'",
+        [],
+    )?;
 
     Ok(())
 }
