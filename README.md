@@ -158,36 +158,10 @@ DELETE /api/quarantine/:uuid          # Delete record
 
 ## Changelog
 
-### 1.3.1 (2026-02-15)
+### 1.3.3 (2026-03-04)
 
-- Added batch operations for threat list
-- Added GitHub Actions auto-build and release
+- **Critical Fix**: Fixed database initialization failure on fresh install
+- Batch operations for threat list
+- GitHub Actions auto-build and release
 - Use Debian 12 container for fnOS compatibility
 - Enabled UNRAR support
-
-### 1.3.0 (2026-02-14)
-
-- Rebranded as "ClamAV for fnOS"
-- Updated application icons
-
-### 1.2.0 (2026-02-14)
-
-- Implemented dual-thread scanning mode
-- Added EMA rate calculation
-- Fixed threat list display and real-time updates
-- Stream scanning optimization
-
-### 1.1.0 (2026-02-13)
-
-- Added WebSocket real-time progress updates
-- Integrated build scripts
-- Fixed progress bar updates
-
-### 1.0.0 (2026-02-12)
-
-- Initial release
-- ClamAV 1.5.1 FFI support
-- Basic scanning functionality
-- Virus database updates
-- Threat quarantine
-- Web UI
