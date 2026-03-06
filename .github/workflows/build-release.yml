@@ -245,15 +245,27 @@ jobs:
       - name: Package FPK
         run: |
           chmod +x build.sh
-          ./build.sh --skip-clamav --platform ${{ matrix.platform }}
+
+          # 获取版本号并传入 build.sh
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "Building FPK with version: $VERSION"
+
+          ./build.sh --skip-clamav --platform ${{ matrix.platform }} --version "$VERSION"
 
           # Rename FPK with version and arch
-          VERSION="${{ steps.version.outputs.version }}"
           ARCH="${{ matrix.arch }}"
           mv dist/fnnas.clamav.fpk dist/fnnas.clamav-${VERSION}-${ARCH}.fpk
 
           echo "fpk_path=dist/fnnas.clamav-${VERSION}-${ARCH}.fpk" >> $GITHUB_OUTPUT
           echo "fpk_name=fnnas.clamav-${VERSION}-${ARCH}.fpk" >> $GITHUB_OUTPUT
+
+          # 验证 manifest 中的版本号
+          echo "Verifying manifest version in FPK..."
+          TEMP_DIR=$(mktemp -d)
+          tar -xzf dist/fnnas.clamav-${VERSION}-${ARCH}.fpk -C "$TEMP_DIR"
+          echo "Manifest content:"
+          cat "$TEMP_DIR/manifest" | grep -E "^(version|platform)"
+          rm -rf "$TEMP_DIR"
 
           ls -lh dist/
 

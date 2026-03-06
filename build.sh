@@ -4,12 +4,13 @@ set -e
 # ========================================
 # ClamAV 飞牛版 - 统一构建打包脚本
 # ========================================
-# 用法: ./build.sh [--clean] [--skip-clamav] [--platform <x86|arm64>]
+# 用法: ./build.sh [--clean] [--skip-clamav] [--platform <x86|arm64>] [--version <version>]
 #
 # 选项:
 #   --clean         清理所有构建缓存和产物
 #   --skip-clamav   跳过 ClamAV 动态库构建（假设已存在）
 #   --platform      指定目标平台 (x86 或 arm64)，默认自动检测
+#   --version       指定版本号（如 1.3.4），默认从 manifest 读取
 #
 # ========================================
 
@@ -22,6 +23,7 @@ CLAMAV_BUILD_DIR="${PROJECT_DIR}/clamAV/build"
 CLEAN_BUILD=false
 SKIP_CLAMAV=false
 PLATFORM=""
+VERSION=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -35,6 +37,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --platform)
             PLATFORM="$2"
+            shift 2
+            ;;
+        --version)
+            VERSION="$2"
             shift 2
             ;;
         *)
@@ -265,9 +271,15 @@ echo "📋 Copying root files..."
 cp "${PROJECT_DIR}/ICON.PNG" "${BUILD_TEMP}/"
 cp "${PROJECT_DIR}/ICON_256.PNG" "${BUILD_TEMP}/"
 
-# 动态生成 manifest 文件（替换 platform 字段）
-echo "📝 Generating manifest for platform: $PLATFORM"
-sed "s/^platform.*=.*/platform              = $PLATFORM/" "${PROJECT_DIR}/manifest" > "${BUILD_TEMP}/manifest"
+# 动态生成 manifest 文件（替换 platform 和 version 字段）
+echo "📝 Generating manifest for platform: $PLATFORM${VERSION:+, version: $VERSION}"
+if [ -n "$VERSION" ]; then
+    sed -e "s/^platform.*=.*/platform              = $PLATFORM/" \
+        -e "s/^version.*=.*/version               = $VERSION/" \
+        "${PROJECT_DIR}/manifest" > "${BUILD_TEMP}/manifest"
+else
+    sed "s/^platform.*=.*/platform              = $PLATFORM/" "${PROJECT_DIR}/manifest" > "${BUILD_TEMP}/manifest"
+fi
 
 # 复制目录
 echo "📂 Copying directories..."
