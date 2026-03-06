@@ -664,7 +664,10 @@ impl ScanEngine {
         let cancelled = Arc::new(AtomicBool::new(false));    // 是否取消
 
         // 文件队列通道（发现线程 -> 扫描线程）
-        let (file_tx, mut file_rx) = mpsc::unbounded_channel::<PathBuf>();
+        // 使用有界通道限制内存使用，避免全盘扫描时路径堆积导致 OOM
+        // 队列大小设为 1000，足够保持扫描线程忙碌，同时控制内存
+        const FILE_QUEUE_SIZE: usize = 1000;
+        let (file_tx, mut file_rx) = mpsc::channel::<PathBuf>(FILE_QUEUE_SIZE);
 
         // 威胁收集（需要 Mutex 保护）
         let all_threats = Arc::new(AsyncMutex::new(Vec::new()));
@@ -725,8 +728,8 @@ impl ScanEngine {
                     } else if entry_path.is_file() {
                         // 增加发现计数
                         discovery_discovered.fetch_add(1, Ordering::Relaxed);
-                        // 发送文件到扫描队列
-                        if file_tx.send(entry_path).is_err() {
+                        // 发送文件到扫描队列（有界通道会自动阻塞，实现背压控制）
+                        if file_tx.send(entry_path).await.is_err() {
                             break;
                         }
                     }
@@ -757,20 +760,22 @@ impl ScanEngine {
             let mut last_progress_update = Instant::now();
 
             while !scan_cancelled.load(Ordering::Relaxed) {
-                // 尝试接收文件
-                let file_path = match file_rx.try_recv() {
-                    Ok(p) => p,
-                    Err(mpsc::error::TryRecvError::Empty) => {
-                        // 队列为空，检查发现是否完成
-                        if scan_discovery_complete.load(Ordering::Relaxed) {
-                            break;
+                // 尝试接收文件（使用 select 实现超时，以便检查发现是否完成）
+                let file_path = tokio::select! {
+                    result = file_rx.recv() => {
+                        match result {
+                            Some(p) => p,
+                            None => break, // 通道关闭
                         }
-                        // 短暂等待
-                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                        continue;
                     }
-                    Err(mpsc::error::TryRecvError::Disconnected) => {
-                        break;
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                        // 超时，检查发现是否完成
+                        if scan_discovery_complete.load(Ordering::Relaxed) {
+                            // 发现已完成且队列为空，退出
+                            break;
+                        } else {
+                            continue;
+                        }
                     }
                 };
 
