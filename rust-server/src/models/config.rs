@@ -27,6 +27,7 @@ pub struct ScanConfig {
     pub exclude_paths: Vec<String>,
     pub max_file_size_mb: u32,
     pub scan_archives: bool,
+    pub log_enabled: bool,  // 是否启用日志记录
 }
 
 impl Default for ScanConfig {
@@ -41,6 +42,7 @@ impl Default for ScanConfig {
             ],
             max_file_size_mb: 100,
             scan_archives: true,
+            log_enabled: false,  // 默认关闭日志
         }
     }
 }

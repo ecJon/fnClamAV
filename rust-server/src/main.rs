@@ -24,14 +24,46 @@ const SERVER_PORT: u16 = 8899;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 检查日志是否启用（通过标志文件）
+    let log_flag_file = std::path::Path::new("/tmp/clamav_log_enabled").exists();
+
     // 初始化日志
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "clamav_daemon=debug,tower_http=debug,axum=trace".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    if log_flag_file {
+        // 日志启用：输出到文件和控制台
+        let log_file_path = "/tmp/clamav_daemon.log";
+        match std::fs::File::create(log_file_path) {
+            Ok(file) => {
+                tracing_subscriber::registry()
+                    .with(
+                        tracing_subscriber::EnvFilter::try_from_default_env()
+                            .unwrap_or_else(|_| "clamav_daemon=debug,tower_http=debug".into()),
+                    )
+                    .with(tracing_subscriber::fmt::layer().with_writer(std::sync::Arc::new(file)))
+                    .init();
+                tracing::info!("Logging enabled, writing to {}", log_file_path);
+            }
+            Err(e) => {
+                // 无法创建日志文件，回退到控制台
+                tracing_subscriber::registry()
+                    .with(
+                        tracing_subscriber::EnvFilter::try_from_default_env()
+                            .unwrap_or_else(|_| "clamav_daemon=debug".into()),
+                    )
+                    .with(tracing_subscriber::fmt::layer())
+                    .init();
+                tracing::warn!("Could not create log file: {}, falling back to console", e);
+            }
+        }
+    } else {
+        // 日志禁用：仅输出到控制台（最小级别）
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "clamav_daemon=info".into()),
+            )
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
 
     tracing::info!("Starting ClamAV Daemon...");
 

@@ -26,7 +26,8 @@ pub async fn get_config(
         "scan_paths": config.scan.exclude_paths,
         "auto_update": config.update.auto_check,
         "quarantine_enabled": config.threat.auto_action,
-        "threat_action": config.threat.action
+        "threat_action": config.threat.action,
+        "log_enabled": config.scan.log_enabled
     }))
 }
 
@@ -76,6 +77,23 @@ pub async fn update_config(
 
     if let Some(threat_action) = partial.get("threat_action").and_then(|v| v.as_str()) {
         config.threat.action = threat_action.to_string();
+    }
+
+    // 处理 log_enabled 字段
+    let mut log_enabled_changed = false;
+    if let Some(log_enabled) = partial.get("log_enabled").and_then(|v| v.as_bool()) {
+        config.scan.log_enabled = log_enabled;
+        log_enabled_changed = true;
+
+        // 创建或删除日志标志文件
+        let log_flag_file = state.env.log_flag_file();
+        if log_enabled {
+            let _ = std::fs::write(&log_flag_file, "1");
+            tracing::info!("Log enabled, flag file created at {}", log_flag_file);
+        } else {
+            let _ = std::fs::remove_file(&log_flag_file);
+            tracing::info!("Log disabled, flag file removed");
+        }
     }
 
     // 也支持原有的嵌套格式

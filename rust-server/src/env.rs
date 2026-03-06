@@ -92,6 +92,11 @@ impl FnosEnv {
         format!("{}/daemon.log", self.pkg_var)
     }
 
+    /// 日志标志文件（用于运行时控制日志开关）
+    pub fn log_flag_file(&self) -> String {
+        format!("{}/log_enabled", self.pkg_var)
+    }
+
     /// PID 文件
     pub fn pid_file(&self) -> String {
         format!("{}/daemon.pid", self.pkg_var)

@@ -72,11 +72,15 @@ createApp({
 
             // 配置
             config: {
-                scan_paths: '',
                 auto_update: true,
                 quarantine_enabled: true,
-                threat_action: 'quarantine'
+                threat_action: 'quarantine',
+                log_enabled: false
             },
+
+            // 自定义扫描弹窗
+            showPathDialog: false,
+            customScanPaths: '',
 
             // 通知
             notification: {
@@ -447,19 +451,26 @@ createApp({
             }
         },
 
-        // 开始自定义扫描
-        async startCustomScan() {
+        // 开始自定义扫描 - 打开弹窗
+        startCustomScan() {
+            // 打开弹窗，让用户输入路径
+            this.customScanPaths = '';
+            this.showPathDialog = true;
+        },
+
+        // 确认自定义扫描
+        async confirmCustomScan() {
             try {
-                // 从配置中获取扫描路径
-                const paths = this.config.scan_paths.split('\n')
+                const paths = this.customScanPaths.split('\n')
                     .map(p => p.trim())
                     .filter(p => p.length > 0);
 
                 if (paths.length === 0) {
-                    this.showNotification('请先在设置中配置扫描路径', 'warning');
-                    this.activeTab = 'settings';
+                    this.showNotification('请输入至少一个扫描路径', 'warning');
                     return;
                 }
+
+                this.showPathDialog = false;
 
                 const result = await this.apiRequest('scan/start', {
                     method: 'POST',
@@ -474,7 +485,7 @@ createApp({
                     this.scanStatus.scan_id = result.scan_id;
                     this.scanStatus.status = 'scanning';
                     this.systemStatus.is_scanning = true;
-                    this.uiState.showProgress = true;  // 立即显示进度条
+                    this.uiState.showProgress = true;
                     await this.loadScanHistory();
                 } else {
                     this.showNotification(result.error || '启动扫描失败', 'error');
