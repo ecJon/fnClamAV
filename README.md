@@ -158,6 +158,11 @@ DELETE /api/quarantine/:uuid          # Delete record
 
 ## Changelog
 
+### 1.3.5 (2026-03-06)
+
+- **Critical Fix**: Fixed memory leak causing OOM during full system scan
+- Fixed manifest version not updating in FPK package
+
 ### 1.3.3 (2026-03-04)
 
 - **Critical Fix**: Fixed database initialization failure on fresh install
