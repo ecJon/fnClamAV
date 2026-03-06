@@ -54,19 +54,6 @@
                 </div>
             </div>
 
-            <!-- 自定义扫描路径弹窗 -->
-            <div v-if="showPathDialog" class="dialog-overlay">
-                <div class="dialog-content">
-                <h3>自定义扫描</h3>
-                <p class="dialog-hint">请输入要扫描的文件或文件夹路径，每行一个</p>
-                <textarea v-model="customScanPaths" rows="6" placeholder="/home/user&#10;/mnt/data&#10;/vol1/photos" class="dialog-textarea"></textarea>
-                <div class="dialog-actions">
-                    <button class="action-btn secondary" @click="showPathDialog = false">取消</button>
-                    <button class="action-btn primary" @click="confirmCustomScan" :disabled="systemStatus.is_scanning">开始扫描</button>
-                </div>
-            </div>
-            </div>
-
             <!-- 主要内容区域 -->
             <main class="main-content" :class="{ 'disabled-content': !isReady }">
                 <!-- 快速操作区 -->
