@@ -857,3 +857,110 @@ body {
         margin-top: 8px;
     }
 }
+
+/* ==================== Dialog Overlay ==================== */
+.dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.dialog-content {
+    background: white;
+    border-radius: 16px;
+    padding: 24px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.dialog-content h3 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1f2937;
+    margin-bottom: 12px;
+}
+
+.dialog-hint {
+    font-size: 14px;
+    color: #6b7280;
+    margin-bottom: 16px;
+}
+
+.dialog-content textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: 'Courier New', monospace;
+    resize: vertical;
+    min-height: 120px;
+    margin-bottom: 20px;
+}
+
+.dialog-content textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.dialog-content textarea::placeholder {
+    color: #9ca3af;
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.dialog-actions .action-btn {
+    min-width: 100px;
+    padding: 10px 20px;
+}
+
+@media (max-width: 768px) {
+    .dialog-content {
+        width: 95%;
+        padding: 20px;
+        margin: 20px;
+    }
+
+    .dialog-actions {
+        flex-direction: column;
+    }
+
+    .dialog-actions .action-btn {
+        width: 100%;
+    }
+}

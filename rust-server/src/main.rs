@@ -24,51 +24,27 @@ const SERVER_PORT: u16 = 8899;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 检查日志是否启用（通过标志文件）
-    let log_flag_file = std::path::Path::new("/tmp/clamav_log_enabled").exists();
+    // 先初始化环境变量（需要获取正确的日志路径）
+    let env = env::FnosEnv::from_env().map_err(|e| anyhow::anyhow!(e))?;
 
-    // 初始化日志
-    if log_flag_file {
-        // 日志启用：输出到文件和控制台
-        let log_file_path = "/tmp/clamav_daemon.log";
-        match std::fs::File::create(log_file_path) {
-            Ok(file) => {
-                tracing_subscriber::registry()
-                    .with(
-                        tracing_subscriber::EnvFilter::try_from_default_env()
-                            .unwrap_or_else(|_| "clamav_daemon=debug,tower_http=debug".into()),
-                    )
-                    .with(tracing_subscriber::fmt::layer().with_writer(std::sync::Arc::new(file)))
-                    .init();
-                tracing::info!("Logging enabled, writing to {}", log_file_path);
-            }
-            Err(e) => {
-                // 无法创建日志文件，回退到控制台
-                tracing_subscriber::registry()
-                    .with(
-                        tracing_subscriber::EnvFilter::try_from_default_env()
-                            .unwrap_or_else(|_| "clamav_daemon=debug".into()),
-                    )
-                    .with(tracing_subscriber::fmt::layer())
-                    .init();
-                tracing::warn!("Could not create log file: {}, falling back to console", e);
-            }
-        }
-    } else {
-        // 日志禁用：仅输出到控制台（最小级别）
+    // 检查日志是否启用（通过标志文件）
+    let log_flag_path = env.log_flag_file();
+    let log_enabled = std::path::Path::new(&log_flag_path).exists();
+
+    // 初始化日志（仅在启用时）
+    // 日志输出到 stdout，由 cmd/main 脚本重定向到 ${TRIM_PKGVAR}/clamav-daemon.log
+    if log_enabled {
         tracing_subscriber::registry()
             .with(
                 tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "clamav_daemon=info".into()),
+                    .unwrap_or_else(|_| "clamav_daemon=debug,tower_http=debug,axum=trace".into()),
             )
             .with(tracing_subscriber::fmt::layer())
             .init();
     }
+    // 日志禁用时：不初始化任何 subscriber，所有日志输出都变成空操作
 
     tracing::info!("Starting ClamAV Daemon...");
-
-    // 初始化环境
-    let env = env::FnosEnv::from_env().map_err(|e| anyhow::anyhow!(e))?;
     tracing::info!("Environment loaded: data_dir={}", env.data_dir());
 
     // 确保必要的目录存在

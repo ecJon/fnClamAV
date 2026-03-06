@@ -27,6 +27,7 @@ pub struct ScanConfig {
     pub exclude_paths: Vec<String>,
     pub max_file_size_mb: u32,
     pub scan_archives: bool,
+    #[serde(default)]  // 兼容旧配置文件中缺失此字段的情况
     pub log_enabled: bool,  // 是否启用日志记录
 }
 

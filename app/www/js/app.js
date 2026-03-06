@@ -413,14 +413,12 @@ createApp({
         async loadConfig() {
             try {
                 const data = await this.apiRequest('config');
-                if (data.scan_paths) {
-                    this.config = {
-                        scan_paths: Array.isArray(data.scan_paths) ? data.scan_paths.join('\n') : data.scan_paths,
-                        auto_update: data.auto_update ?? true,
-                        quarantine_enabled: data.quarantine_enabled ?? true,
-                        threat_action: data.threat_action || 'quarantine'
-                    };
-                }
+                this.config = {
+                    auto_update: data.auto_update ?? true,
+                    quarantine_enabled: data.quarantine_enabled ?? true,
+                    threat_action: data.threat_action || 'quarantine',
+                    log_enabled: data.log_enabled ?? false
+                };
             } catch (error) {
                 console.error('Failed to load config:', error);
             }
@@ -667,19 +665,18 @@ createApp({
         // 保存配置
         async saveConfig() {
             try {
-                const paths = this.config.scan_paths.split('\n').filter(p => p.trim());
                 const result = await this.apiRequest('config', {
                     method: 'PUT',
                     body: JSON.stringify({
-                        scan_paths: paths,
                         auto_update: this.config.auto_update,
                         quarantine_enabled: this.config.quarantine_enabled,
-                        threat_action: this.config.threat_action
+                        threat_action: this.config.threat_action,
+                        log_enabled: this.config.log_enabled
                     })
                 });
 
                 if (result.success) {
-                    this.showNotification('配置已保存', 'success');
+                    this.showNotification('配置已保存，重启服务后生效', 'success');
                 } else {
                     this.showNotification(result.error || '保存配置失败', 'error');
                 }
