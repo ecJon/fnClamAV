@@ -158,6 +158,12 @@ DELETE /api/quarantine/:uuid          # Delete record
 
 ## Changelog
 
+### 1.3.6 (2026-03-06)
+
+- **UI Enhancement**: Custom scan now uses popup dialog for path input
+- **New Feature**: Added log toggle option in settings
+- Removed scan path configuration from settings page
+
 ### 1.3.5 (2026-03-06)
 
 - **Critical Fix**: Fixed memory leak causing OOM during full system scan
